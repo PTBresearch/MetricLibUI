@@ -1,0 +1,16 @@
+name: metric-backend
+channels:
+  - defaults
+dependencies:
+  - python=3.14
+  - fastapi
+  - uvicorn
+  - pydantic
+  - pandas
+  - pip
+  - wfdb
+  - plotly
+  - duckdb=1.4
+  - pip:
+      - fastapi-cors
+      - ecg-plot
