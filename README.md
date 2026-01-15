@@ -45,7 +45,7 @@ pip install -e .
 ```
 
 ### 3. Start the backend server
-
+From the `backend` folder run
 ```bash
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 

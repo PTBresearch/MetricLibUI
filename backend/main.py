@@ -24,9 +24,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from metric.data import Dataset
-from metric.data_auditor import DataAuditor
-from metric.report import Report
+from metriclib.data import Dataset
+from metriclib.report import Report
 
 app = FastAPI()
 
@@ -304,6 +303,61 @@ async def create_report(request: ReportRequest):
         )
 
     report = Report(datasets)
+    for i in range(len(request.mappings)):
+        if "sex" in request.mappings[i].keys():
+            report.add_metric(
+                name=f"variety_sex",
+                metric_name="HillNumbers",
+                metric_config={"column": "sex", "q": 2, "types": [0, 1]},
+                dataset_name=request.dataset_names[i],
+            )
+
+        if "age" in request.mappings[i].keys():
+            report.add_metric(
+                name=f"variety_age",
+                metric_name="IQR",
+                metric_config={
+                    "column": "age",
+                },
+                dataset_name=request.dataset_names[i],
+            )
+            report.add_metric(
+                name=f"variety_age",
+                metric_name="Range",
+                metric_config={
+                    "column": "age",
+                },
+                dataset_name=request.dataset_names[i],
+            )
+
+        if "created_at" in request.mappings[i].keys():
+            report.add_metric(
+                name=f"currency",
+                metric_name="CurrencyHeinrich",
+                metric_config={"created_at_field": "created_at", "A": 1e-9},
+                dataset_name=request.dataset_names[i],
+            )
+
+    if all("sex" in mapping.keys() for mapping in request.mappings):
+        report.add_chart(
+            name="variety_sex",
+            chart_type="categorical_bar_chart",
+            chart_config={"field": "sex"},
+        )
+
+    if all("age" in mapping.keys() for mapping in request.mappings):
+        report.add_chart(
+            name="variety_age",
+            chart_type="continuous_bar_chart",
+            chart_config={"field": "age"},
+        )
+
+    if all("created_at" in mapping.keys() for mapping in request.mappings):
+        report.add_chart(
+            name="currency",
+            chart_type="categorical_bar_chart",
+            chart_config={"field": "created_at"},
+        )
 
     metrics, charts, scores = report.generate()
     metrics = safe_serialize(metrics)
@@ -311,6 +365,19 @@ async def create_report(request: ReportRequest):
     charts = convert_figures(charts)
     return JSONResponse(
         content={"metrics": metrics, "charts": charts, "scores": scores}
+    )
+
+
+@app.get("/api/scores")
+async def get_scores(index):
+    return JSONResponse(
+        content={
+            "representativeness": 0.6,
+            "measurement_error": 1.0,
+            "timeliness": 0.75,
+            "informativeness": 0.85,
+            "consistency": 0.95,
+        }
     )
 
 
