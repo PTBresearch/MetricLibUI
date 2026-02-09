@@ -104,7 +104,7 @@ export default {
     },
     confirmAddField() {
       if (this.pendingField && this.selectedTargetField) {
-        this.mapping[this.selectedTargetField] = this.pendingField;
+        this.mapping[this.pendingField] = this.selectedTargetField;
         this.pendingField = null;
         this.selectedTargetField = null;
         this.showOverlay = false;

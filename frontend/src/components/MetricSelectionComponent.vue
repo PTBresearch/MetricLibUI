@@ -151,8 +151,8 @@ export default {
           },
           "depth of data": {
             "dataset size": ["dataset_size"],
-            granularity: [],
-            coverage: ["coverage_device_sex"],
+            granularity: ["resolution"],
+            coverage: ["coverage_label_sex"],
           },
           "target class balance": ["class_balance"],
         },
@@ -258,11 +258,6 @@ export default {
           entry => entry?.name === item
         );
       
-        if (!metric_values.length) {
-          chartEl.innerHTML = '<div style="color:red">No data found for this metric.</div>';
-          return;
-        }
-      
         const allDescriptions = new Set();
         metric_values.forEach(entry => {
           if (entry.result?.description) {
@@ -326,6 +321,7 @@ export default {
 
         if (Array.isArray(figures) && figures.length > 0) {
           figures.forEach((fig, idx) => {
+            console.log(fig, idx)
             const containerDiv = document.createElement("div");
             containerDiv.style.marginBottom = "24px";
           
@@ -423,6 +419,22 @@ export default {
       this.$nextTick(() => {
         this.renderPlotlyChart(null);
       });
+    },
+    report: {
+      handler() {
+        this.additionalMerged = false;
+        if (this.selectedItems) {
+          this.plotlyVisible = true;
+          this.$nextTick(() => {
+            this.renderPlotlyChart(this.selectedItems);
+          });
+        } else {
+          const chartEl = document.getElementById('plotly-chart');
+          if (chartEl) chartEl.innerHTML = '';
+          this.plotlyVisible = false;
+        }
+      },
+      deep: false,
     },
   },
 };

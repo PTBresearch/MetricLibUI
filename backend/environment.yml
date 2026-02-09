@@ -1,8 +1,8 @@
-name: metric-backend
+name: metriclibui
 channels:
   - defaults
 dependencies:
-  - python=3.14
+  - python=3.13
   - fastapi
   - uvicorn
   - pydantic

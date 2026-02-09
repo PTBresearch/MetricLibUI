@@ -12,7 +12,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 import matplotlib.image as mpimg
-import math
 import numpy as np
 import pandas as pd
 import wfdb
@@ -23,9 +22,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import ast
 
 from metriclib.data import Dataset
 from metriclib.report import Report
+from metriclib.metric import TabularMetric
+
+from custom_metrics import CustomMetric
 
 app = FastAPI()
 
@@ -66,12 +69,19 @@ class CsvDataset(Dataset):
         row = self.df.iloc[idx].to_dict()
 
         result = {}
+        labels = ast.literal_eval(row.get("labels"))
         for key, value in self.mapping.items():
-            field = row.get(value)
-            result[key] = field
+            if value == "other":
+                field = row.get(key)
+                result[key] = field
+            if value == "label":
+                labels.append(result.get(key))
+            else:
+                field = row.get(value)
+                result[key] = field
 
         if "model_input" not in self.mapping:
-            return None, 0, result
+            return None, labels, result
 
         try:
             x = wfdb.rdsamp(
@@ -92,9 +102,12 @@ class CsvDataset(Dataset):
             img_chw = np.transpose(img, (2, 0, 1)).astype(np.float32)
             x = torch.from_numpy(img_chw)
 
+        if len(labels) == 1:
+            labels = labels[0]
+
         return (
             x,
-            0,
+            labels,
             result,
         )
 
@@ -150,7 +163,7 @@ async def upload_file_existing(name: str):
             "features": len(df.columns),
             "rows": len(df),
             "missing_values": int(df.isnull().sum().values.sum()),
-            "cols": df.columns.tolist()[0:5],
+            "cols": df.columns.tolist(),
         }
     )
 
@@ -170,7 +183,7 @@ async def get_file_metadata(name: str):
         "features": len(df.columns),
         "rows": len(df),
         "missing_values": int(df.isnull().sum().values.sum()),
-        "cols": df.columns.tolist()[0:5],
+        "cols": df.columns.tolist(),
     }
 
 
@@ -211,6 +224,12 @@ async def get_dataset(name: str, query: str, mapping: str):
         return JSONResponse(status_code=404, content={"error": "File not found."})
 
     metadata_df = con.execute(f"SELECT * FROM {name.replace('.csv', '')}").df()
+    metadata_df = CsvDataset(
+        name=name, df=metadata_df, mapping=json.loads(mapping)
+    ).get_metadata()
+
+    metadata_df.insert(0, "idx", metadata_df.index)
+
     metadata_df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
     if query_str.strip() and query_str != "":
@@ -298,6 +317,15 @@ async def create_report(request: ReportRequest):
     datasets = []
     for i, name in enumerate(request.dataset_names):
         metadata_df = con.execute(f"SELECT * FROM {name.replace('.csv', '')}").df()
+        print(f"Loaded dataset {name} with {len(metadata_df)} rows.")
+        if request.queries and i < len(request.queries):
+            query_str = process_query(request.queries[i])
+            if query_str.strip() and query_str != "":
+                print(len(metadata_df))
+                print(query_str)
+                metadata_df = metadata_df[metadata_df.eval(query_str)]
+                print(len(metadata_df))
+
         datasets.append(
             CsvDataset(df=metadata_df, name=name, mapping=request.mappings[i])
         )
@@ -321,6 +349,7 @@ async def create_report(request: ReportRequest):
                 },
                 dataset_name=request.dataset_names[i],
             )
+
             report.add_metric(
                 name=f"variety_age",
                 metric_name="Range",
@@ -330,11 +359,17 @@ async def create_report(request: ReportRequest):
                 dataset_name=request.dataset_names[i],
             )
 
-        if "created_at" in request.mappings[i].keys():
+            report.add_metric(
+                name=f"coverage_label_sex",
+                metric_name="DemographicParity",
+                metric_config={"i": i},
+                dataset_name=request.dataset_names[i],
+            )
+
             report.add_metric(
                 name=f"currency",
-                metric_name="CurrencyHeinrich",
-                metric_config={"created_at_field": "created_at", "A": 1e-9},
+                metric_name="Currency",
+                metric_config={"i": i},
                 dataset_name=request.dataset_names[i],
             )
 
@@ -358,6 +393,15 @@ async def create_report(request: ReportRequest):
             chart_type="categorical_bar_chart",
             chart_config={"field": "created_at"},
         )
+
+    for metric in TabularMetric.registry.values():
+        if issubclass(metric, CustomMetric):
+            report.add_metric(
+                name=metric().dimension,
+                metric_name=metric.__name__,
+                metric_config={},
+                dataset_name=request.dataset_names[0],
+            )
 
     metrics, charts, scores = report.generate()
     metrics = safe_serialize(metrics)
