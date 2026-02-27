@@ -137,40 +137,45 @@ export default {
       try {
         this.records.splice(index, 1, newData["data"]);
         this.queries[index] = newData["query"];
-        const response = await fetch('http://localhost:8000/api/report', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            dataset_names: this.dbNames,
-            mappings: this.mappings,
-            queries: this.queries
-          }),
-        }).catch(error => {
+        let response;
+        try {
+          response = await fetch('http://localhost:8000/api/report', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              dataset_names: this.dbNames,
+              mappings: this.mappings,
+              queries: this.queries
+            }),
+          });
+        } catch (error) {
           this.hasError = true;
           this.errorMessage = "Error creating report.";
           console.error('Error sending report request:', error);
-        });
+          return;
+        }
 
         this.report = await response.json();
 
-        console.log()
         this.$refs.metrics.renderPlotlyChart();
-        const response_spider = await fetch(`http://localhost:8000/api/scores?index=${index}`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
 
-        const scores = await response_spider.json();
+        const datasetName = this.dbNames[index];
+        const scores = this.report?.scores?.[index] ?? this.report?.scores?.[datasetName];
+        if (!scores) {
+          this.hasError = true;
+          this.errorMessage = `Missing scores in report for dataset: ${datasetName}`;
+          console.error('Missing scores in report:', { index, datasetName, report: this.report });
+          return;
+        }
+
         this.$refs.radarChart.updateChartData([
-          scores["measurement_error"] * 100,
-          scores["timeliness"] * 100,
-          scores["representativeness"] * 100,
-          scores["informativeness"] * 100,
-          scores["consistency"] * 100,
+          scores["Measurement Process"] * 100,
+          scores["Timeliness"] * 100,
+          scores["Representativeness"] * 100,
+          scores["Informativeness"] * 100,
+          scores["Consistency"] * 100,
         ], index);
       } finally {
         this.stopLoading();

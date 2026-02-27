@@ -321,10 +321,7 @@ async def create_report(request: ReportRequest):
         if request.queries and i < len(request.queries):
             query_str = process_query(request.queries[i])
             if query_str.strip() and query_str != "":
-                print(len(metadata_df))
-                print(query_str)
                 metadata_df = metadata_df[metadata_df.eval(query_str)]
-                print(len(metadata_df))
 
         datasets.append(
             CsvDataset(df=metadata_df, name=name, mapping=request.mappings[i])
@@ -359,19 +356,82 @@ async def create_report(request: ReportRequest):
                 dataset_name=request.dataset_names[i],
             )
 
+        if "height" in request.mappings[i].keys():
             report.add_metric(
-                name=f"coverage_label_sex",
-                metric_name="DemographicParity",
-                metric_config={"i": i},
+                name=f"variety_height",
+                metric_name="IQR",
+                metric_config={
+                    "column": "height",
+                },
                 dataset_name=request.dataset_names[i],
             )
 
+        if "weight" in request.mappings[i].keys():
             report.add_metric(
-                name=f"currency",
-                metric_name="Currency",
-                metric_config={"i": i},
+                name=f"variety_weight",
+                metric_name="IQR",
+                metric_config={
+                    "column": "weight",
+                },
                 dataset_name=request.dataset_names[i],
             )
+
+        if "device" in request.mappings[i].keys():
+            report.add_metric(
+                name=f"variety_device",
+                metric_name="HillNumbers",
+                metric_config={
+                    "column": "device",
+                    "q": 2,
+                    "types": datasets[i].df["device"].unique().tolist(),
+                },
+                dataset_name=request.dataset_names[i],
+            )
+
+        if "site" in request.mappings[i].keys():
+            report.add_metric(
+                name=f"variety_site",
+                metric_name="HillNumbers",
+                metric_config={
+                    "column": "site",
+                    "q": 2,
+                    "types": datasets[i].df["site"].unique().tolist(),
+                },
+                dataset_name=request.dataset_names[i],
+            )
+
+        if "sex" in request.mappings[i].keys():
+            report.add_chart(
+                name="coverage_label_sex",
+                chart_type="mosaique_chart",
+                chart_config={
+                    "proportion_field": "sex",
+                    "category_field": "labels",
+                    "name": request.dataset_names[i],
+                    "index": i,
+                },
+            )
+
+        if "weight" in request.mappings[i].keys():
+            report.add_chart(
+                name="variety_weight",
+                chart_type="continuous_bar_chart",
+                chart_config={"field": "weight"},
+            )
+
+    if all("device" in mapping.keys() for mapping in request.mappings):
+        report.add_chart(
+            name="variety_device",
+            chart_type="categorical_bar_chart",
+            chart_config={"field": "device"},
+        )
+
+    if all("site" in mapping.keys() for mapping in request.mappings):
+        report.add_chart(
+            name="variety_site",
+            chart_type="categorical_bar_chart",
+            chart_config={"field": "site"},
+        )
 
     if all("sex" in mapping.keys() for mapping in request.mappings):
         report.add_chart(
@@ -385,6 +445,13 @@ async def create_report(request: ReportRequest):
             name="variety_age",
             chart_type="continuous_bar_chart",
             chart_config={"field": "age"},
+        )
+
+    if all("height" in mapping.keys() for mapping in request.mappings):
+        report.add_chart(
+            name="variety_height",
+            chart_type="continuous_bar_chart",
+            chart_config={"field": "height"},
         )
 
     if all("created_at" in mapping.keys() for mapping in request.mappings):
@@ -414,13 +481,14 @@ async def create_report(request: ReportRequest):
 
 @app.get("/api/scores")
 async def get_scores(index):
+    # placeholder for now
     return JSONResponse(
         content={
-            "representativeness": 0.6,
-            "measurement_error": 1.0,
-            "timeliness": 0.75,
-            "informativeness": 0.85,
-            "consistency": 0.95,
+            "representativeness": 0.0,
+            "measurement_error": 0.0,
+            "timeliness": 0.0,
+            "informativeness": 0.0,
+            "consistency": 0.0,
         }
     )
 
