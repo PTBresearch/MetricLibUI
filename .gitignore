@@ -137,3 +137,6 @@ vite.config.js.timestamp-*
 *.sln
 *.sw?
 
+# Data folder
+data/*
+!data/.gitkeep

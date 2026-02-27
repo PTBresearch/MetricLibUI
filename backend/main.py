@@ -12,7 +12,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 import matplotlib.image as mpimg
-import math
 import numpy as np
 import pandas as pd
 import wfdb
@@ -23,9 +22,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import ast
 
 from metriclib.data import Dataset
 from metriclib.report import Report
+from metriclib.metric import TabularMetric
+
+from custom_metrics import CustomMetric
 
 app = FastAPI()
 
@@ -66,12 +69,19 @@ class CsvDataset(Dataset):
         row = self.df.iloc[idx].to_dict()
 
         result = {}
+        labels = ast.literal_eval(row.get("labels"))
         for key, value in self.mapping.items():
-            field = row.get(value)
-            result[key] = field
+            if value == "other":
+                field = row.get(key)
+                result[key] = field
+            if value == "label":
+                labels.append(result.get(key))
+            else:
+                field = row.get(value)
+                result[key] = field
 
         if "model_input" not in self.mapping:
-            return None, 0, result
+            return None, labels, result
 
         try:
             x = wfdb.rdsamp(
@@ -92,9 +102,12 @@ class CsvDataset(Dataset):
             img_chw = np.transpose(img, (2, 0, 1)).astype(np.float32)
             x = torch.from_numpy(img_chw)
 
+        if len(labels) == 1:
+            labels = labels[0]
+
         return (
             x,
-            0,
+            labels,
             result,
         )
 
@@ -150,7 +163,7 @@ async def upload_file_existing(name: str):
             "features": len(df.columns),
             "rows": len(df),
             "missing_values": int(df.isnull().sum().values.sum()),
-            "cols": df.columns.tolist()[0:5],
+            "cols": df.columns.tolist(),
         }
     )
 
@@ -170,7 +183,7 @@ async def get_file_metadata(name: str):
         "features": len(df.columns),
         "rows": len(df),
         "missing_values": int(df.isnull().sum().values.sum()),
-        "cols": df.columns.tolist()[0:5],
+        "cols": df.columns.tolist(),
     }
 
 
@@ -211,6 +224,12 @@ async def get_dataset(name: str, query: str, mapping: str):
         return JSONResponse(status_code=404, content={"error": "File not found."})
 
     metadata_df = con.execute(f"SELECT * FROM {name.replace('.csv', '')}").df()
+    metadata_df = CsvDataset(
+        name=name, df=metadata_df, mapping=json.loads(mapping)
+    ).get_metadata()
+
+    metadata_df.insert(0, "idx", metadata_df.index)
+
     metadata_df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
     if query_str.strip() and query_str != "":
@@ -298,6 +317,12 @@ async def create_report(request: ReportRequest):
     datasets = []
     for i, name in enumerate(request.dataset_names):
         metadata_df = con.execute(f"SELECT * FROM {name.replace('.csv', '')}").df()
+        print(f"Loaded dataset {name} with {len(metadata_df)} rows.")
+        if request.queries and i < len(request.queries):
+            query_str = process_query(request.queries[i])
+            if query_str.strip() and query_str != "":
+                metadata_df = metadata_df[metadata_df.eval(query_str)]
+
         datasets.append(
             CsvDataset(df=metadata_df, name=name, mapping=request.mappings[i])
         )
@@ -321,6 +346,7 @@ async def create_report(request: ReportRequest):
                 },
                 dataset_name=request.dataset_names[i],
             )
+
             report.add_metric(
                 name=f"variety_age",
                 metric_name="Range",
@@ -330,13 +356,82 @@ async def create_report(request: ReportRequest):
                 dataset_name=request.dataset_names[i],
             )
 
-        if "created_at" in request.mappings[i].keys():
+        if "height" in request.mappings[i].keys():
             report.add_metric(
-                name=f"currency",
-                metric_name="CurrencyHeinrich",
-                metric_config={"created_at_field": "created_at", "A": 1e-9},
+                name=f"variety_height",
+                metric_name="IQR",
+                metric_config={
+                    "column": "height",
+                },
                 dataset_name=request.dataset_names[i],
             )
+
+        if "weight" in request.mappings[i].keys():
+            report.add_metric(
+                name=f"variety_weight",
+                metric_name="IQR",
+                metric_config={
+                    "column": "weight",
+                },
+                dataset_name=request.dataset_names[i],
+            )
+
+        if "device" in request.mappings[i].keys():
+            report.add_metric(
+                name=f"variety_device",
+                metric_name="HillNumbers",
+                metric_config={
+                    "column": "device",
+                    "q": 2,
+                    "types": datasets[i].df["device"].unique().tolist(),
+                },
+                dataset_name=request.dataset_names[i],
+            )
+
+        if "site" in request.mappings[i].keys():
+            report.add_metric(
+                name=f"variety_site",
+                metric_name="HillNumbers",
+                metric_config={
+                    "column": "site",
+                    "q": 2,
+                    "types": datasets[i].df["site"].unique().tolist(),
+                },
+                dataset_name=request.dataset_names[i],
+            )
+
+        if "sex" in request.mappings[i].keys():
+            report.add_chart(
+                name="coverage_label_sex",
+                chart_type="mosaique_chart",
+                chart_config={
+                    "proportion_field": "sex",
+                    "category_field": "labels",
+                    "name": request.dataset_names[i],
+                    "index": i,
+                },
+            )
+
+        if "weight" in request.mappings[i].keys():
+            report.add_chart(
+                name="variety_weight",
+                chart_type="continuous_bar_chart",
+                chart_config={"field": "weight"},
+            )
+
+    if all("device" in mapping.keys() for mapping in request.mappings):
+        report.add_chart(
+            name="variety_device",
+            chart_type="categorical_bar_chart",
+            chart_config={"field": "device"},
+        )
+
+    if all("site" in mapping.keys() for mapping in request.mappings):
+        report.add_chart(
+            name="variety_site",
+            chart_type="categorical_bar_chart",
+            chart_config={"field": "site"},
+        )
 
     if all("sex" in mapping.keys() for mapping in request.mappings):
         report.add_chart(
@@ -352,12 +447,28 @@ async def create_report(request: ReportRequest):
             chart_config={"field": "age"},
         )
 
+    if all("height" in mapping.keys() for mapping in request.mappings):
+        report.add_chart(
+            name="variety_height",
+            chart_type="continuous_bar_chart",
+            chart_config={"field": "height"},
+        )
+
     if all("created_at" in mapping.keys() for mapping in request.mappings):
         report.add_chart(
             name="currency",
             chart_type="categorical_bar_chart",
             chart_config={"field": "created_at"},
         )
+
+    for metric in TabularMetric.registry.values():
+        if issubclass(metric, CustomMetric):
+            report.add_metric(
+                name=metric().dimension,
+                metric_name=metric.__name__,
+                metric_config={},
+                dataset_name=request.dataset_names[0],
+            )
 
     metrics, charts, scores = report.generate()
     metrics = safe_serialize(metrics)
@@ -370,13 +481,14 @@ async def create_report(request: ReportRequest):
 
 @app.get("/api/scores")
 async def get_scores(index):
+    # placeholder for now
     return JSONResponse(
         content={
-            "representativeness": 0.6,
-            "measurement_error": 1.0,
-            "timeliness": 0.75,
-            "informativeness": 0.85,
-            "consistency": 0.95,
+            "representativeness": 0.0,
+            "measurement_error": 0.0,
+            "timeliness": 0.0,
+            "informativeness": 0.0,
+            "consistency": 0.0,
         }
     )
 

@@ -157,9 +157,9 @@ export default {
             'Content-Type': 'application/json'
           },
         });
+
         if (!response.ok) throw new Error('Failed to fetch dataset');
         const newData = await response.json();
-        console.log(newData)
         this.$emit('update:data', {"data": newData, "query": query});
         this.$emit('table-refreshed');
       } catch (err) {
