@@ -69,13 +69,14 @@ class CsvDataset(Dataset):
         row = self.df.iloc[idx].to_dict()
 
         result = {}
-        labels = ast.literal_eval(row.get("labels"))
+        label_keys = [k for k, v in self.mapping.items() if v == "label"]
+        labels = [row.get(k) for k in label_keys]
         for key, value in self.mapping.items():
             if value == "other":
                 field = row.get(key)
                 result[key] = field
             if value == "label":
-                labels.append(result.get(key))
+                result[key] = row.get(key)
             else:
                 field = row.get(value)
                 result[key] = field
@@ -101,9 +102,6 @@ class CsvDataset(Dataset):
                 img = img[:, :, None]
             img_chw = np.transpose(img, (2, 0, 1)).astype(np.float32)
             x = torch.from_numpy(img_chw)
-
-        if len(labels) == 1:
-            labels = labels[0]
 
         return (
             x,
@@ -400,10 +398,13 @@ async def create_report(request: ReportRequest):
                 dataset_name=request.dataset_names[i],
             )
 
-        if "sex" in request.mappings[i].keys():
+        if (
+            "sex" in request.mappings[i].keys()
+            and "labels" in request.mappings[i].keys()
+        ):
             report.add_chart(
                 name="coverage_label_sex",
-                chart_type="mosaique_chart",
+                chart_type="mosaique_label_chart",
                 chart_config={
                     "proportion_field": "sex",
                     "category_field": "labels",
