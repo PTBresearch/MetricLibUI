@@ -81,12 +81,11 @@ export default {
         "age": "age",
         "sex": "sex",
         "device": "device",
-        "created_at": "recording_date"
       },
       showOverlay: false,
       pendingField: null,
       selectedTargetField: null,
-      targetFieldOptions: ["age", "sex", "height", "weight", "nurse", "site", "device", "model_input", "ethnicity", "recording_date", "label", "other"]
+      targetFieldOptions: ["age", "sex", "height", "weight", "nurse", "site", "device", "model_input", "ethnicity", "created_at", "label", "other"]
     };
   },
   methods: {

@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import ast
+import math
 
 from metriclib.data import Dataset
 from metriclib.report import Report
@@ -71,7 +72,7 @@ class CsvDataset(Dataset):
         result = {}
         label_keys = [k for k, v in self.mapping.items() if v == "label"]
         labels = [row.get(k) for k in label_keys]
-        for key, value in self.mapping.items():
+        for value, key in self.mapping.items():
             if value == "other":
                 field = row.get(key)
                 result[key] = field
@@ -81,20 +82,24 @@ class CsvDataset(Dataset):
                 field = row.get(value)
                 result[key] = field
 
-        if "model_input" not in self.mapping:
+        if "model_input" not in self.mapping.values():
             return None, labels, result
 
         try:
             x = wfdb.rdsamp(
-                row[
-                    list(self.mapping.keys())[
-                        list(self.mapping.values()).index("model_input")
-                    ]
-                ]
-            )
+                os.path.join(
+                    DATA_DIR,
+                    row[
+                        list(self.mapping.keys())[
+                            list(self.mapping.values()).index("model_input")
+                        ]
+                    ],
+                )
+            )[0].T
         except Exception as e:
-            x = 0
-            model_input_col = self.mapping["model_input"]
+            model_input_col = list(self.mapping.keys())[
+                list(self.mapping.values()).index("model_input")
+            ]
             img_path = row.get(model_input_col)
             img_path = os.path.join(DATA_DIR, img_path)
             img = mpimg.imread(img_path)
@@ -209,6 +214,12 @@ async def create_dataset(request: DatasetRequest):
 
     metadata_df.fillna("", inplace=True)
 
+    if "model_input" in request.mapping.values():
+        metadata_df.drop(
+            columns=[k for v, k in request.mapping.items() if v == "model_input"],
+            inplace=True,
+        )
+
     return JSONResponse(content=metadata_df.to_dict(orient="records"))
 
 
@@ -229,6 +240,12 @@ async def get_dataset(name: str, query: str, mapping: str):
     metadata_df.insert(0, "idx", metadata_df.index)
 
     metadata_df.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+    if "model_input" in json.loads(mapping).values():
+        metadata_df.drop(
+            columns=[k for v, k in json.loads(mapping).items() if v == "model_input"],
+            inplace=True,
+        )
 
     if query_str.strip() and query_str != "":
         metadata_df = metadata_df[metadata_df.eval(query_str)]
@@ -267,19 +284,35 @@ async def get_data(name, header=False):
 
 
 def safe_serialize(obj):
-    """Return a JSON-serializable version of the object, or skip it."""
+    """Return a JSON-serializable version of the object."""
+
+    if obj is None:
+        return None
+
+    # Pandas missing datetime value
+    if obj is pd.NaT:
+        return None
 
     if isinstance(obj, np.generic):
-        return obj.item()
+        return safe_serialize(obj.item())
 
-    if isinstance(obj, (str, int, float, bool)) or obj is None:
+    if isinstance(obj, (float, np.floating)):
+        # Convert NaN/Inf to JSON null
+        if not math.isfinite(float(obj)):
+            return None
+        return float(obj)
+
+    if isinstance(obj, (int, np.integer)):
+        return int(obj)
+
+    if isinstance(obj, (str, bool)):
         return obj
 
     if isinstance(obj, dict):
         clean = {}
         for k, v in obj.items():
             serialized = safe_serialize(v)
-            if serialized is not None:
+            if serialized is not _SAFE_SERIALIZE_SKIP:
                 clean[k] = serialized
         return clean
 
@@ -287,13 +320,18 @@ def safe_serialize(obj):
         clean = []
         for item in obj:
             serialized = safe_serialize(item)
-            if serialized is not None:
-                clean.append(serialized)
+            clean.append(None if serialized is _SAFE_SERIALIZE_SKIP else serialized)
         return clean
+
+    if isinstance(obj, np.ndarray):
+        return safe_serialize(obj.tolist())
 
     if hasattr(obj, "__dict__"):
         return safe_serialize(obj.__dict__)
-    return None
+    return _SAFE_SERIALIZE_SKIP
+
+
+_SAFE_SERIALIZE_SKIP = object()
 
 
 def convert_figures(obj):
@@ -327,7 +365,18 @@ async def create_report(request: ReportRequest):
 
     report = Report(datasets)
     for i in range(len(request.mappings)):
-        if "sex" in request.mappings[i].keys():
+        if (
+            "label" in request.mappings[i].values()
+            and len([v for v in request.mappings[i].values() if v == "label"]) > 1
+        ):
+            report.add_metric(
+                name=f"class_balance",
+                metric_name="MultiClassGeneralizedImbalanceRatio",
+                metric_config={"column": "labels"},
+                dataset_name=request.dataset_names[i],
+            )
+
+        if "sex" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_sex",
                 metric_name="HillNumbers",
@@ -335,7 +384,7 @@ async def create_report(request: ReportRequest):
                 dataset_name=request.dataset_names[i],
             )
 
-        if "age" in request.mappings[i].keys():
+        if "age" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_age",
                 metric_name="IQR",
@@ -354,7 +403,7 @@ async def create_report(request: ReportRequest):
                 dataset_name=request.dataset_names[i],
             )
 
-        if "height" in request.mappings[i].keys():
+        if "height" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_height",
                 metric_name="IQR",
@@ -364,7 +413,7 @@ async def create_report(request: ReportRequest):
                 dataset_name=request.dataset_names[i],
             )
 
-        if "weight" in request.mappings[i].keys():
+        if "weight" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_weight",
                 metric_name="IQR",
@@ -374,7 +423,7 @@ async def create_report(request: ReportRequest):
                 dataset_name=request.dataset_names[i],
             )
 
-        if "device" in request.mappings[i].keys():
+        if "device" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_device",
                 metric_name="HillNumbers",
@@ -386,7 +435,7 @@ async def create_report(request: ReportRequest):
                 dataset_name=request.dataset_names[i],
             )
 
-        if "site" in request.mappings[i].keys():
+        if "site" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_site",
                 metric_name="HillNumbers",
@@ -399,8 +448,8 @@ async def create_report(request: ReportRequest):
             )
 
         if (
-            "sex" in request.mappings[i].keys()
-            and "labels" in request.mappings[i].keys()
+            "sex" in request.mappings[i].values()
+            and "label" in request.mappings[i].values()
         ):
             report.add_chart(
                 name="coverage_label_sex",
@@ -413,49 +462,100 @@ async def create_report(request: ReportRequest):
                 },
             )
 
-        if "weight" in request.mappings[i].keys():
+        if "weight" in request.mappings[i].values():
             report.add_chart(
                 name="variety_weight",
                 chart_type="continuous_bar_chart",
                 chart_config={"field": "weight"},
             )
 
-    if all("device" in mapping.keys() for mapping in request.mappings):
+        report.add_metric(
+            name="dataset_size",
+            metric_name="DatasetSize",
+            metric_config={},
+            dataset_name=request.dataset_names[i],
+        )
+
+        if "model_input" in request.mappings[i].values():
+            report.add_metric(
+                name="resolution",
+                metric_name="Resolution",
+                metric_config={},
+                dataset_name=request.dataset_names[i],
+            )
+
+        if "created_at" in request.mappings[i].values():
+            report.add_metric(
+                name="currency",
+                metric_name="CurrencyHeinrich",
+                metric_config={"created_at_field": "created_at"},
+                dataset_name=request.dataset_names[i],
+            )
+
+        feature_columns = [
+            v
+            for k, v in request.mappings[i].items()
+            if v in ["sex", "device", "site", "ethnicity", "nurse"]
+        ]
+
+        if len(feature_columns) > 0 and "label" in request.mappings[i].values():
+            report.add_metric(
+                name="correlations",
+                metric_name="PearsonCorrelation",
+                metric_config={"feature_columns": feature_columns},
+                dataset_name=request.dataset_names[i],
+            )
+
+        report.add_metric(
+            name="uniqueness",
+            metric_name="Duplicates",
+            metric_config={},
+            dataset_name=request.dataset_names[i],
+        )
+
+        report.add_metric(
+            name="metadata_completeness",
+            metric_name="MetadataCompleteness",
+            metric_config={},
+            dataset_name=request.dataset_names[i],
+        )
+
+    if all("device" in mapping.values() for mapping in request.mappings):
         report.add_chart(
             name="variety_device",
             chart_type="categorical_bar_chart",
             chart_config={"field": "device"},
         )
 
-    if all("site" in mapping.keys() for mapping in request.mappings):
+    if all("site" in mapping.values() for mapping in request.mappings):
         report.add_chart(
             name="variety_site",
             chart_type="categorical_bar_chart",
             chart_config={"field": "site"},
         )
 
-    if all("sex" in mapping.keys() for mapping in request.mappings):
+    if all("sex" in mapping.values() for mapping in request.mappings):
         report.add_chart(
             name="variety_sex",
             chart_type="categorical_bar_chart",
             chart_config={"field": "sex"},
         )
 
-    if all("age" in mapping.keys() for mapping in request.mappings):
+    if all("age" in mapping.values() for mapping in request.mappings):
         report.add_chart(
             name="variety_age",
             chart_type="continuous_bar_chart",
             chart_config={"field": "age"},
         )
 
-    if all("height" in mapping.keys() for mapping in request.mappings):
+    if all("height" in mapping.values() for mapping in request.mappings):
         report.add_chart(
             name="variety_height",
             chart_type="continuous_bar_chart",
             chart_config={"field": "height"},
         )
 
-    if all("created_at" in mapping.keys() for mapping in request.mappings):
+    if all("created_at" in mapping.values() for mapping in request.mappings):
         report.add_chart(
             name="currency",
             chart_type="categorical_bar_chart",

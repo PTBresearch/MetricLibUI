@@ -123,7 +123,7 @@ export default {
             carelessness: [],
             outliers: ["local_outlier_factor"],
           },
-          completeness: ["completeness"],
+          completeness: ["metadata_completeness"],
           "source credibility": {
             expertise: [],
             traceability: [],
