@@ -104,6 +104,7 @@ export default {
       buttons: [],
       cols: [],
       mappings: [],
+      useCase: null,
       records: [],
       dbNames: [],
       queries: [],
@@ -206,7 +207,9 @@ export default {
         this.stopLoading();
       }
     },
-    async handleOverlayClose(mapping) {
+    async handleOverlayClose(payload) {
+      const mapping = payload?.mapping ?? payload;
+      const useCase = payload?.useCase ?? null;
       this.showOverlay = false;
       this.startLoading();
       try {
@@ -218,7 +221,8 @@ export default {
             },
             body: JSON.stringify({
               name: this.dbNames[this.dbNames.length - 1].replace('.csv', ''),
-              mapping: mapping
+              mapping: mapping,
+              use_case: useCase
             }),
           });
 
@@ -228,6 +232,12 @@ export default {
           console.error('Error sending mapping:', error);
         }
         this.mappings.push(mapping);
+        if (this.useCase === null) {
+          this.useCase = useCase;
+        } else if (useCase && this.useCase !== useCase) {
+          console.warn(`Use case mismatch: existing use case is "${this.useCase}", but received "${useCase}". Overwriting with new use case.`);
+        }
+        this.useCase = useCase;
         this.queries.push("")
         const reportResponse = await fetch('http://localhost:8000/api/report', {
           method: 'POST',
@@ -237,7 +247,8 @@ export default {
           body: JSON.stringify({
             dataset_names: this.dbNames,
             mappings: this.mappings,
-            queries: this.queries
+            queries: this.queries,
+            use_case: this.useCase
           }),
         }).catch(error => {
           console.error('Error sending report request:', error);

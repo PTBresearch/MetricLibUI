@@ -3,6 +3,14 @@
     <div class="left-panel">
 
       <h3>Field Selection</h3>
+      <div class="use-case-selection">
+        <label for="use-case-select">Use case</label>
+        <select id="use-case-select" v-model="selectedUseCase" class="dropdown-select">
+          <option v-for="useCase in useCases" :key="useCase" :value="useCase">
+            {{ useCase }}
+          </option>
+        </select>
+      </div>
       <div class="field-selection">
         <div
           v-for="key in cols"
@@ -90,7 +98,10 @@ export default {
   },
   methods: {
     close() {
-      this.$emit("close", this.mapping);
+      this.$emit("close", {
+        mapping: this.mapping,
+        useCase: this.selectedUseCase,
+      });
     },
     onToggleChange(field) {
       if (this.mapping[field]) {
@@ -148,6 +159,16 @@ export default {
   font-weight: 600;
   margin-bottom: 18px;
   letter-spacing: 0.5px;
+}
+
+.use-case-selection {
+  margin-bottom: 16px;
+}
+
+.use-case-selection label {
+  display: block;
+  color: #b2becd;
+  margin-bottom: 8px;
 }
 
 .dropdown-select {

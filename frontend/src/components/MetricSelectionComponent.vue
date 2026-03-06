@@ -115,7 +115,7 @@ export default {
       metricsData: {
         "Measurement Process": {
           "device error": {
-            accuracy: [],
+            accuracy: ["sample_entropy"],
             precision: [],
           },
           "human induced error": {

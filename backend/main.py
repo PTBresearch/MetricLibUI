@@ -3,7 +3,7 @@ import io
 import json
 import os
 import re
-from typing import List
+from typing import List, Optional
 
 import matplotlib
 import torch
@@ -73,11 +73,8 @@ class CsvDataset(Dataset):
         label_keys = [k for k, v in self.mapping.items() if v == "label"]
         labels = [row.get(k) for k in label_keys]
         for value, key in self.mapping.items():
-            if value == "other":
-                field = row.get(key)
-                result[key] = field
-            if value == "label":
-                result[key] = row.get(key)
+            if key == "other" or key == "label":
+                result[value] = field
             else:
                 field = row.get(value)
                 result[key] = field
@@ -134,6 +131,7 @@ class ReportRequest(BaseModel):
     dataset_names: List[str]
     mappings: List[dict]
     queries: List[str] = []
+    use_case: Optional[str] = None
 
 
 @app.get("/api/files")
@@ -203,7 +201,7 @@ async def create_dataset(request: DatasetRequest):
     con.register(request.name, df)
 
     dataset = CsvDataset(name=request.name, df=df, mapping=request.mapping)
-
+    print(df)
     metadata_df = dataset.get_metadata()
     metadata_df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
@@ -483,6 +481,14 @@ async def create_report(request: ReportRequest):
                 metric_config={},
                 dataset_name=request.dataset_names[i],
             )
+
+            if request.use_case == "ECG diagnosis":
+                report.add_metric(
+                    name="sample_entropy",
+                    metric_name="SampleEntropy",
+                    metric_config={},
+                    dataset_name=request.dataset_names[i],
+                )
 
         if "created_at" in request.mappings[i].values():
             report.add_metric(
