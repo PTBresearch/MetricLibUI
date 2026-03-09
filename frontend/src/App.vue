@@ -26,6 +26,7 @@
           :data="records[index]"
           :dbName="dbNames[index]"
           :mapping="mappings[index]"
+          :useCase="this.useCase"
           @update:data="updateRecord(index, $event)"
           @update:image="showImage"
           @loading="handleLoading"

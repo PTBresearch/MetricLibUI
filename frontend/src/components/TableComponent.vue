@@ -75,6 +75,10 @@ export default {
       type: Object,
       default: () => ({})
     },
+    useCase: {
+      type: String,
+      default: ""
+    },
   },
   data() {
     return {
@@ -175,9 +179,10 @@ export default {
     async getImage(row) {
       const name = this.dbName
       const idx = row["idx"]
+      const mapping = this.mapping
       this.$emit('loading', true);
       try {
-        const response = await fetch(`/api/image?name=${encodeURIComponent(name)}&index=${encodeURIComponent(idx)}`, {
+        const response = await fetch(`/api/image?name=${encodeURIComponent(name)}&index=${encodeURIComponent(idx)}&mapping=${encodeURIComponent(JSON.stringify(mapping))}&use_case=${encodeURIComponent(this.useCase)}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json'

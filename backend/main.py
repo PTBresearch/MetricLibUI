@@ -74,6 +74,7 @@ class CsvDataset(Dataset):
         labels = [row.get(k) for k in label_keys]
         for value, key in self.mapping.items():
             if key == "other" or key == "label":
+                field = row.get(value)
                 result[value] = field
             else:
                 field = row.get(value)
@@ -201,7 +202,6 @@ async def create_dataset(request: DatasetRequest):
     con.register(request.name, df)
 
     dataset = CsvDataset(name=request.name, df=df, mapping=request.mapping)
-    print(df)
     metadata_df = dataset.get_metadata()
     metadata_df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
@@ -211,12 +211,6 @@ async def create_dataset(request: DatasetRequest):
     metadata_df.insert(0, "idx", metadata_df.index)
 
     metadata_df.fillna("", inplace=True)
-
-    if "model_input" in request.mapping.values():
-        metadata_df.drop(
-            columns=[k for v, k in request.mapping.items() if v == "model_input"],
-            inplace=True,
-        )
 
     return JSONResponse(content=metadata_df.to_dict(orient="records"))
 
@@ -238,12 +232,6 @@ async def get_dataset(name: str, query: str, mapping: str):
     metadata_df.insert(0, "idx", metadata_df.index)
 
     metadata_df.replace([np.inf, -np.inf], np.nan, inplace=True)
-
-    if "model_input" in json.loads(mapping).values():
-        metadata_df.drop(
-            columns=[k for v, k in json.loads(mapping).items() if v == "model_input"],
-            inplace=True,
-        )
 
     if query_str.strip() and query_str != "":
         metadata_df = metadata_df[metadata_df.eval(query_str)]
@@ -363,16 +351,21 @@ async def create_report(request: ReportRequest):
 
     report = Report(datasets)
     for i in range(len(request.mappings)):
-        if (
-            "label" in request.mappings[i].values()
-            and len([v for v in request.mappings[i].values() if v == "label"]) > 1
-        ):
-            report.add_metric(
-                name=f"class_balance",
-                metric_name="MultiClassGeneralizedImbalanceRatio",
-                metric_config={"column": "labels"},
-                dataset_name=request.dataset_names[i],
-            )
+        if "label" in request.mappings[i].values():
+            if len([v for v in request.mappings[i].values() if v == "label"]) > 1:
+                report.add_metric(
+                    name=f"class_balance",
+                    metric_name="MultiClassGeneralizedImbalanceRatio",
+                    metric_config={"column": "labels"},
+                    dataset_name=request.dataset_names[i],
+                )
+            else:
+                report.add_metric(
+                    name=f"class_balance",
+                    metric_name="MultiLabelGeneralizedImbalanceRatio",
+                    metric_config={"column": "labels"},
+                    dataset_name=request.dataset_names[i],
+                )
 
         if "sex" in request.mappings[i].values():
             report.add_metric(
@@ -498,6 +491,26 @@ async def create_report(request: ReportRequest):
                 dataset_name=request.dataset_names[i],
             )
 
+        if (
+            "sex" in request.mappings[i].values()
+            and "device" in request.mappings[i].values()
+        ):
+            report.add_metric(
+                name="MMD",
+                metric_name="MMD",
+                metric_config={"groups": {"sex": [0, 1]}, "feature_cols": ["device"]},
+            )
+
+        if (
+            "sex" in request.mappings[i].values()
+            and "label" in request.mappings[i].values()
+        ):
+            report.add_metric(
+                name="coverage_label_sex",
+                metric_name="MultiClassDemographicParity",
+                metric_config={"protected_attribute": "sex"},
+            )
+
         feature_columns = [
             v
             for k, v in request.mappings[i].items()
@@ -601,8 +614,16 @@ async def get_scores(index):
 
 
 @app.get("/api/image")
-def get_image(index: str, name: str):
-    metadata_df = pd.read_csv(os.path.join(DATA_DIR, name))
+def get_image(index: str, name: str, mapping: str, use_case: str = None):
+    metadata_df = metadata_df = con.execute(
+        f"SELECT * FROM {name.replace('.csv', '')}"
+    ).df()
+
+    if use_case != "ECG diagnosis":
+        raise ValueError("Unsupported use case for image retrieval")
+
+    mapping = json.loads(mapping)
+    model_input_col = list(mapping.keys())[list(mapping.values()).index("model_input")]
 
     file_path = os.path.join(DATA_DIR, name)
     if not os.path.exists(file_path):
@@ -611,7 +632,7 @@ def get_image(index: str, name: str):
         )
 
     x = wfdb.rdsamp(
-        os.path.join(DATA_DIR, metadata_df["filename_hr"].iloc[int(index)])
+        os.path.join(DATA_DIR, metadata_df[model_input_col].iloc[int(index)])
     )[0].T
 
     ecg_plot.plot_12(x, sample_rate=500)

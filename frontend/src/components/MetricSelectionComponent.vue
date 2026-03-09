@@ -174,8 +174,8 @@ export default {
             "semantic consistency": [],
             plausibility: [],
           },
-          "distrbution consistency": {
-            homogeneity: [],
+          "distribution consistency": {
+            homogeneity: ["MMD"],
             "distribution drift": [],
           },
         },
