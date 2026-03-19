@@ -1,4 +1,5 @@
 import base64
+from datetime import date, datetime
 import io
 import json
 import os
@@ -57,9 +58,15 @@ def startup():
 
 class CsvDataset(Dataset):
     def __init__(
-        self, name, df: pd.DataFrame, mapping: dict, metadata_df: pd.DataFrame = None
+        self,
+        name,
+        df: pd.DataFrame,
+        mapping: dict,
+        metadata_df: pd.DataFrame = None,
+        metadata_df_processed: pd.DataFrame = None,
+        labels: List = None,
     ):
-        super().__init__(name)
+        super().__init__(name, metadata_df_processed, labels)
         self.df = df
         self.mapping = mapping
 
@@ -203,42 +210,60 @@ async def create_dataset(request: DatasetRequest):
 
     dataset = CsvDataset(name=request.name, df=df, mapping=request.mapping)
     metadata_df = dataset.get_metadata()
-    metadata_df.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+    con.register(f"{request.name}_metadata_processed", metadata_df)
+    con.register(f"{request.name}_labels", pd.DataFrame(dataset.labels))
+    numeric_cols = metadata_df.select_dtypes(include=[np.number]).columns
+    if len(numeric_cols) > 0:
+        metadata_df.loc[:, numeric_cols] = metadata_df.loc[:, numeric_cols].replace(
+            [np.inf, -np.inf], np.nan
+        )
 
     if "idx" in metadata_df.columns:
         return JSONResponse(status_code=422, content={"error": "Unprocessable Entity"})
 
     metadata_df.insert(0, "idx", metadata_df.index)
 
-    metadata_df.fillna("", inplace=True)
-
-    return JSONResponse(content=metadata_df.to_dict(orient="records"))
+    return JSONResponse(content=safe_serialize(metadata_df.to_dict(orient="records")))
 
 
 @app.get("/api/dataset")
 async def get_dataset(name: str, query: str, mapping: str):
-    data_dir = DATA_DIR
-    file_path = os.path.join(data_dir, name)
     query_str = process_query(query)
 
-    if not os.path.exists(file_path):
-        return JSONResponse(status_code=404, content={"error": "File not found."})
+    metadata_df_processed = con.execute(
+        f"SELECT * FROM {name.replace('.csv', '')}_metadata_processed"
+    ).df()
 
-    metadata_df = con.execute(f"SELECT * FROM {name.replace('.csv', '')}").df()
-    metadata_df = CsvDataset(
-        name=name, df=metadata_df, mapping=json.loads(mapping)
-    ).get_metadata()
+    labels = con.execute(f"SELECT * FROM {name.replace('.csv', '')}_labels").df()[
+        "_label"
+    ]
 
-    metadata_df.insert(0, "idx", metadata_df.index)
-
-    metadata_df.replace([np.inf, -np.inf], np.nan, inplace=True)
-
+    metadata_df_processed["_label"] = labels
     if query_str.strip() and query_str != "":
-        metadata_df = metadata_df[metadata_df.eval(query_str)]
+        metadata_df_processed = metadata_df_processed[
+            metadata_df_processed.eval(query_str)
+        ]
+        labels = metadata_df_processed["_label"]
+        metadata_df_processed = metadata_df_processed.drop(columns=["_label"])
 
-    metadata_df.fillna("", inplace=True)
+    con.register(
+        f"{name.replace('.csv', '')}_metadata_processed", metadata_df_processed
+    )
+    con.register(f"{name.replace('.csv', '')}_labels", pd.DataFrame(labels))
 
-    return JSONResponse(content=metadata_df.to_dict(orient="records"))
+    metadata_df_processed.insert(0, "idx", metadata_df_processed.index)
+
+    numeric_cols = metadata_df_processed.select_dtypes(include=[np.number]).columns
+
+    if len(numeric_cols) > 0:
+        metadata_df_processed.loc[:, numeric_cols] = metadata_df_processed.loc[
+            :, numeric_cols
+        ].replace([np.inf, -np.inf], np.nan)
+
+    return JSONResponse(
+        content=safe_serialize(metadata_df_processed.to_dict(orient="records"))
+    )
 
 
 def process_query(query):
@@ -288,10 +313,16 @@ def safe_serialize(obj):
             return None
         return float(obj)
 
+    if isinstance(obj, (bool, np.bool_)):
+        return bool(obj)
+
     if isinstance(obj, (int, np.integer)):
         return int(obj)
 
-    if isinstance(obj, (str, bool)):
+    if isinstance(obj, (datetime, date, pd.Timestamp)):
+        return obj.isoformat()
+
+    if isinstance(obj, str):
         return obj
 
     if isinstance(obj, dict):
@@ -345,11 +376,25 @@ async def create_report(request: ReportRequest):
             if query_str.strip() and query_str != "":
                 metadata_df = metadata_df[metadata_df.eval(query_str)]
 
+        processed_metadata_df = con.execute(
+            f"SELECT * FROM {name.replace('.csv', '')}_metadata_processed"
+        ).df()
+        labels = con.execute(f"SELECT * FROM {name.replace('.csv', '')}_labels").df()[
+            "_label"
+        ]
+
         datasets.append(
-            CsvDataset(df=metadata_df, name=name, mapping=request.mappings[i])
+            CsvDataset(
+                df=metadata_df,
+                name=name,
+                mapping=request.mappings[i],
+                metadata_df_processed=processed_metadata_df,
+                labels=labels,
+            )
         )
 
     report = Report(datasets)
+
     for i in range(len(request.mappings)):
         if "label" in request.mappings[i].values():
             if len([v for v in request.mappings[i].values() if v == "label"]) > 1:
@@ -499,6 +544,7 @@ async def create_report(request: ReportRequest):
                 name="MMD",
                 metric_name="MMD",
                 metric_config={"groups": {"sex": [0, 1]}, "feature_cols": ["device"]},
+                dataset_name=request.dataset_names[i],
             )
 
         if (
@@ -509,6 +555,7 @@ async def create_report(request: ReportRequest):
                 name="coverage_label_sex",
                 metric_name="MultiClassDemographicParity",
                 metric_config={"protected_attribute": "sex"},
+                dataset_name=request.dataset_names[i],
             )
 
         feature_columns = [
@@ -525,12 +572,15 @@ async def create_report(request: ReportRequest):
                 dataset_name=request.dataset_names[i],
             )
 
-        report.add_metric(
-            name="uniqueness",
-            metric_name="Duplicates",
-            metric_config={},
-            dataset_name=request.dataset_names[i],
-        )
+        if all(
+            "model_input" in request.mappings[i].values()
+            for i in range(len(request.mappings))
+        ):
+            report.add_chart(
+                name="sample_entropy",
+                chart_type="continuous_bar_chart",
+                chart_config={"field": "SampleEntropy", "n_buckets": 10},
+            )
 
         report.add_metric(
             name="metadata_completeness",
@@ -591,17 +641,25 @@ async def create_report(request: ReportRequest):
             )
 
     metrics, charts, scores = report.generate()
-    metrics = safe_serialize(metrics)
 
-    charts = convert_figures(charts)
-    return JSONResponse(
-        content={"metrics": metrics, "charts": charts, "scores": scores}
-    )
+    for dataset in report.datasets:
+        con.register(
+            f"{dataset.name.replace('.csv', '')}_metadata_processed", dataset.metadata
+        )
+        con.register(
+            f"{dataset.name.replace('.csv', '')}_labels", pd.DataFrame(dataset.labels)
+        )
+
+    payload = {
+        "metrics": metrics,
+        "charts": convert_figures(charts),
+        "scores": scores,
+    }
+    return JSONResponse(content=safe_serialize(payload))
 
 
 @app.get("/api/scores")
 async def get_scores(index):
-    # placeholder for now
     return JSONResponse(
         content={
             "representativeness": 0.0,
@@ -635,7 +693,7 @@ def get_image(index: str, name: str, mapping: str, use_case: str = None):
         os.path.join(DATA_DIR, metadata_df[model_input_col].iloc[int(index)])
     )[0].T
 
-    ecg_plot.plot_12(x, sample_rate=500)
+    ecg_plot.plot_12(x, sample_rate=x.shape[1] / 10)
 
     fig = plt.gcf()
 

@@ -31,7 +31,7 @@
       </div>
 
       <!-- Content display -->
-      <div v-if="tableHeaders.length" class="content-section">
+      <div v-if="tableHeaders.length && hasMetricItems" class="content-section">
         <table class="content-table">
           <thead>
             <tr>
@@ -54,6 +54,9 @@
             </tr>
           </tbody>
         </table>
+      </div>
+      <div v-else class="empty-metrics-message">
+        There are no metrics contributing to that dimension.
       </div>
     </div>
 
@@ -208,6 +211,11 @@ export default {
     maxRows() {
       return Math.max(1, ...this.columns.map((col) => col.length));
     },
+    hasMetricItems() {
+      return this.columns.some(
+        (col) => Array.isArray(col) && col.some((item) => Boolean(item))
+      );
+    },
   },
   methods: {
     changeTopTab(tab) {
@@ -283,7 +291,9 @@ export default {
           }
         });
       
-        const scoreTableHTML = `
+        const hasScoreData = orderedDescriptions.length > 0 && datasetMap.size > 0;
+
+        const scoreTableHTML = hasScoreData ? `
           <h5 style="margin: 0 0 6px 0; font-size: 0.8rem;">Scores</h5>
           <table style="width: 100%; border-collapse: collapse; font-size: 0.7rem; text-align: center;">
             <thead>
@@ -313,7 +323,7 @@ export default {
               }).join('')}
             </tbody>
           </table>
-        `;
+        ` : '';
 
         const figures = this.report.charts.filter(
           entry => entry?.name === item
@@ -325,7 +335,7 @@ export default {
             const containerDiv = document.createElement("div");
             containerDiv.style.marginBottom = "24px";
           
-            if (idx === 0 && scoreTableHTML) {
+            if (idx === 0 && hasScoreData) {
               const scoreDiv = document.createElement("div");
               scoreDiv.className = "score-values";
               scoreDiv.style.marginBottom = "12px";
@@ -348,14 +358,14 @@ export default {
           
             window.Plotly.react(figDiv, fig.figure.data, layout, { responsive: true });
           });
-        } else if (scoreTableHTML) {
+        } else if (hasScoreData) {
           const scoreDiv = document.createElement("div");
           scoreDiv.className = "score-values";
           scoreDiv.style.marginBottom = "12px";
           scoreDiv.innerHTML = scoreTableHTML;
           chartEl.appendChild(scoreDiv);
         } else {
-          chartEl.innerHTML = '<div style="color:red">No chart data found in report.</div>';
+          chartEl.innerHTML = '<div class="empty-metrics-message">There are no metrics contributing to that dimension.</div>';
         }
       
       } catch (err) {
@@ -485,6 +495,17 @@ export default {
 
 .content-section {
   margin-top: 8px;
+}
+
+.empty-metrics-message {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #bbb;
+  text-align: center;
+  font-size: 0.78rem;
 }
 
 .content-table {

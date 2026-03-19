@@ -149,7 +149,8 @@ export default {
             body: JSON.stringify({
               dataset_names: this.dbNames,
               mappings: this.mappings,
-              queries: this.queries
+              queries: this.queries,
+              use_case: this.useCase
             }),
           });
         } catch (error) {
