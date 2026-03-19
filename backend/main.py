@@ -404,12 +404,27 @@ async def create_report(request: ReportRequest):
                     metric_config={"column": "labels"},
                     dataset_name=request.dataset_names[i],
                 )
+                report.add_chart(
+                    name=f"class_balance",
+                    chart_type="label_bar_chart",
+                    chart_config={},
+                )
             else:
                 report.add_metric(
                     name=f"class_balance",
                     metric_name="MultiLabelGeneralizedImbalanceRatio",
                     metric_config={"column": "labels"},
                     dataset_name=request.dataset_names[i],
+                )
+
+                report.add_chart(
+                    name=f"class_balance",
+                    chart_type="categorical_bar_chart",
+                    chart_config={
+                        "field": [
+                            v for v, k in request.mappings[i].items() if k == "label"
+                        ][0]
+                    },
                 )
 
         if "sex" in request.mappings[i].values():
