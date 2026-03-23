@@ -4,7 +4,6 @@ import io
 import json
 import os
 import re
-import ast
 from typing import List, Optional
 
 import matplotlib
@@ -68,79 +67,6 @@ def load_table_with_fallback(primary_table: str, fallback_table: str) -> pd.Data
         return con.execute(f"SELECT * FROM {fallback_table}").df()
 
 
-def coerce_label_dataframe_types(labels_df: pd.DataFrame) -> pd.DataFrame:
-    """Convert label columns to numeric when values are numeric strings."""
-    coerced_df = labels_df.copy()
-    for col in coerced_df.columns:
-        series = coerced_df[col]
-        converted = pd.to_numeric(series, errors="coerce")
-        if converted.notna().sum() == series.notna().sum():
-            coerced_df[col] = converted
-    return coerced_df
-
-
-def coerce_label_scalar(value):
-    """Convert numeric-like label scalars (e.g. '0', '1') to numbers."""
-    if value is None:
-        return None
-    if isinstance(value, np.generic):
-        value = value.item()
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped == "":
-            return value
-        try:
-            numeric_value = float(stripped)
-            return int(numeric_value) if numeric_value.is_integer() else numeric_value
-        except ValueError:
-            return value
-    return value
-
-
-def labels_df_to_multiclass_matrix(
-    labels_df: pd.DataFrame, n_label_targets: int
-) -> np.ndarray:
-    """Return numeric 2D matrix for multi-class labels with fixed width."""
-    width = max(1, n_label_targets)
-    if labels_df.empty:
-        return np.empty((0, width), dtype=float)
-
-    if labels_df.shape[1] == 1:
-        rows = []
-        for value in labels_df.iloc[:, 0].tolist():
-            if isinstance(value, (list, tuple, np.ndarray)):
-                row = list(value)
-            elif isinstance(value, str):
-                try:
-                    parsed = ast.literal_eval(value)
-                    if isinstance(parsed, (list, tuple, np.ndarray)):
-                        row = list(parsed)
-                    else:
-                        row = [parsed]
-                except Exception:
-                    row = [value]
-            elif pd.isna(value):
-                row = []
-            else:
-                row = [value]
-
-            if len(row) < width:
-                row.extend([0] * (width - len(row)))
-            else:
-                row = row[:width]
-            rows.append(row)
-
-        matrix_df = pd.DataFrame(rows)
-    else:
-        matrix_df = labels_df.iloc[:, :width].copy()
-        if matrix_df.shape[1] < width:
-            for j in range(matrix_df.shape[1], width):
-                matrix_df[j] = 0
-
-    matrix_df = matrix_df.apply(pd.to_numeric, errors="coerce").fillna(0)
-    return matrix_df.to_numpy(dtype=float)
-
-
 def sanitize_metadata_for_duckdb(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize object columns so DuckDB sees stable scalar types per column."""
     cleaned = df.copy()
@@ -176,6 +102,19 @@ class CsvDataset(Dataset):
         metadata_df_processed: pd.DataFrame = None,
         labels: List = None,
     ):
+        if labels is not None:
+            if isinstance(labels, pd.DataFrame):
+                raise TypeError(
+                    "CsvDataset labels must already be a list of tensors, not a dataframe"
+                )
+            labels = [
+                (
+                    label.detach().clone().to(dtype=torch.float32)
+                    if isinstance(label, torch.Tensor)
+                    else torch.tensor(label, dtype=torch.float32)
+                )
+                for label in labels
+            ]
         super().__init__(name, metadata_df_processed, labels)
         self.df = df
         self.mapping = mapping
@@ -188,7 +127,12 @@ class CsvDataset(Dataset):
 
         result = {}
         label_keys = [k for k, v in self.mapping.items() if v == "label"]
-        labels = [coerce_label_scalar(row.get(k)) for k in label_keys]
+        labels = torch.tensor(
+            pd.to_numeric(
+                pd.Series([row.get(k) for k in label_keys]), errors="coerce"
+            ).to_numpy(dtype=np.float32),
+            dtype=torch.float32,
+        )
         for value, key in self.mapping.items():
             if key == "other" or key == "label":
                 field = row.get(value)
@@ -327,14 +271,16 @@ async def create_dataset(request: DatasetRequest):
     )
     con.register(f"{request.name}_metadata_processed", metadata_df)
     con.register(f"{request.name}_metadata_processed_base", metadata_df)
-    con.register(
-        f"{request.name}_labels",
-        coerce_label_dataframe_types(pd.DataFrame(dataset.labels)),
+    label_columns = [
+        column for column, role in request.mapping.items() if role == "label"
+    ]
+    labels_df = (
+        df.loc[:, label_columns].copy()
+        if label_columns
+        else pd.DataFrame({"_label": [None] * len(df)})
     )
-    con.register(
-        f"{request.name}_labels_base",
-        coerce_label_dataframe_types(pd.DataFrame(dataset.labels)),
-    )
+    con.register(f"{request.name}_labels", labels_df)
+    con.register(f"{request.name}_labels_base", labels_df)
     numeric_cols = metadata_df.select_dtypes(include=[np.number]).columns
     if len(numeric_cols) > 0:
         metadata_df.loc[:, numeric_cols] = metadata_df.loc[:, numeric_cols].replace(
@@ -364,19 +310,19 @@ async def get_dataset(name: str, query: str, mapping: str):
         metadata_source, f"{key}_metadata_processed_base"
     )
 
-    labels_df = coerce_label_dataframe_types(
-        load_table_with_fallback(labels_source, f"{key}_labels_base")
-    )
+    labels_df = load_table_with_fallback(labels_source, f"{key}_labels_base")
 
     if query_str.strip() and query_str != "":
         metadata_df_processed = metadata_df_processed[
             metadata_df_processed.eval(query_str)
         ]
-        labels_df = labels_df.loc[metadata_df_processed.index]
+        common_idx = metadata_df_processed.index.intersection(labels_df.index)
+        metadata_df_processed = metadata_df_processed.loc[common_idx]
+        labels_df = labels_df.loc[common_idx]
 
     metadata_df_processed = sanitize_metadata_for_duckdb(metadata_df_processed)
     con.register(f"{key}_metadata_processed", metadata_df_processed)
-    con.register(f"{key}_labels", coerce_label_dataframe_types(labels_df))
+    con.register(f"{key}_labels", labels_df)
 
     mapping_df = con.execute(f"SELECT * FROM {key}_mapping").df()
 
@@ -509,26 +455,58 @@ async def create_report(request: ReportRequest):
         key = dataset_key(name)
         n_label_targets = sum(1 for v in request.mappings[i].values() if v == "label")
         metadata_df = con.execute(f"SELECT * FROM {key}").df()
+        labels_df = con.execute(f"SELECT * FROM {key}_labels_base").df()
         print(f"Loaded dataset {name} with {len(metadata_df)} rows.")
         if request.queries and i < len(request.queries):
             query_str = process_query(request.queries[i])
             if query_str.strip() and query_str != "":
                 metadata_df = metadata_df[metadata_df.eval(query_str)]
+                common_idx = metadata_df.index.intersection(labels_df.index)
+                metadata_df = metadata_df.loc[common_idx]
+                labels_df = labels_df.loc[common_idx]
+
+        if labels_df.empty:
+            labels = []
+        elif n_label_targets > 1 and labels_df.shape[1] > 1:
+            labels = [
+                torch.tensor(row, dtype=torch.float32)
+                for row in labels_df.iloc[:, :n_label_targets]
+                .apply(pd.to_numeric, errors="coerce")
+                .fillna(0)
+                .to_numpy(dtype=np.float32)
+                .tolist()
+            ]
+        else:
+            labels = [
+                torch.tensor(
+                    (
+                        pd.to_numeric(
+                            pd.Series(
+                                value.tolist()
+                                if isinstance(value, np.ndarray)
+                                else (
+                                    value.detach().cpu().numpy().tolist()
+                                    if isinstance(value, torch.Tensor)
+                                    else value
+                                )
+                            ),
+                            errors="coerce",
+                        )
+                        .fillna(0)
+                        .to_numpy(dtype=np.float32)
+                        if isinstance(value, (list, tuple, np.ndarray, torch.Tensor))
+                        else pd.to_numeric(pd.Series([value]), errors="coerce")
+                        .fillna(0)
+                        .to_numpy(dtype=np.float32)
+                    ),
+                    dtype=torch.float32,
+                )
+                for value in labels_df.iloc[:, 0].tolist()
+            ]
 
         processed_metadata_df = con.execute(
             f"SELECT * FROM {key}_metadata_processed"
         ).df()
-        labels_df = coerce_label_dataframe_types(
-            con.execute(f"SELECT * FROM {key}_labels").df()
-        )
-        if n_label_targets > 1:
-            labels_matrix = labels_df_to_multiclass_matrix(labels_df, n_label_targets)
-            labels = pd.Series(labels_matrix.tolist())
-        elif labels_df.shape[1] == 1:
-            labels = labels_df.iloc[:, 0].to_numpy()
-        else:
-            labels = labels_df.iloc[:, 0].to_numpy()
-
         datasets.append(
             CsvDataset(
                 df=metadata_df,
@@ -645,13 +623,6 @@ async def create_report(request: ReportRequest):
                 },
             )
 
-        if "weight" in request.mappings[i].values():
-            report.add_chart(
-                name="variety_weight",
-                chart_type="continuous_bar_chart",
-                chart_config={"field": "weight"},
-            )
-
         report.add_metric(
             name="dataset_size",
             metric_name="DatasetSize",
@@ -736,6 +707,13 @@ async def create_report(request: ReportRequest):
             dataset_name=request.dataset_names[i],
         )
 
+    if all("weight" in mapping.values() for mapping in request.mappings):
+        report.add_chart(
+            name="variety_weight",
+            chart_type="continuous_bar_chart",
+            chart_config={"field": "weight"},
+        )
+
     if all("device" in mapping.values() for mapping in request.mappings):
         report.add_chart(
             name="variety_device",
@@ -789,38 +767,11 @@ async def create_report(request: ReportRequest):
 
     metrics, charts, scores = report.generate()
 
-    label_target_counts = {
-        dataset_key(request.dataset_names[i]): sum(
-            1 for v in request.mappings[i].values() if v == "label"
-        )
-        for i in range(len(request.dataset_names))
-    }
-
     for dataset in report.datasets:
         key = dataset_key(dataset.name)
         con.register(
             f"{key}_metadata_processed", sanitize_metadata_for_duckdb(dataset.metadata)
         )
-        labels_array = np.asarray(dataset.labels)
-        n_label_targets = label_target_counts.get(key, 1)
-        if n_label_targets > 1:
-            labels_df = pd.DataFrame(labels_array)
-            con.register(
-                f"{key}_labels",
-                pd.DataFrame(
-                    labels_df_to_multiclass_matrix(labels_df, n_label_targets)
-                ),
-            )
-        elif labels_array.ndim == 1:
-            con.register(
-                f"{key}_labels",
-                coerce_label_dataframe_types(pd.DataFrame({"_label": labels_array})),
-            )
-        else:
-            con.register(
-                f"{key}_labels",
-                coerce_label_dataframe_types(pd.DataFrame(labels_array)),
-            )
 
     payload = {
         "metrics": metrics,
