@@ -211,6 +211,10 @@ async def create_dataset(request: DatasetRequest):
     dataset = CsvDataset(name=request.name, df=df, mapping=request.mapping)
     metadata_df = dataset.get_metadata()
 
+    con.register(
+        f"{request.name}_mapping",
+        pd.DataFrame(request.mapping.items(), columns=["key", "value"]),
+    )
     con.register(f"{request.name}_metadata_processed", metadata_df)
     con.register(f"{request.name}_labels", pd.DataFrame(dataset.labels))
     numeric_cols = metadata_df.select_dtypes(include=[np.number]).columns
@@ -260,6 +264,16 @@ async def get_dataset(name: str, query: str, mapping: str):
         metadata_df_processed.loc[:, numeric_cols] = metadata_df_processed.loc[
             :, numeric_cols
         ].replace([np.inf, -np.inf], np.nan)
+
+    mapping = con.execute(f"SELECT * FROM {name.replace('.csv', '')}_mapping").df()
+    mapping_cols = set(mapping["key"]).union(set(mapping["value"]))
+    metadata_df_processed = metadata_df_processed[
+        [
+            col
+            for col in metadata_df_processed.columns
+            if col == "idx" or col in mapping_cols
+        ]
+    ]
 
     return JSONResponse(
         content=safe_serialize(metadata_df_processed.to_dict(orient="records"))
