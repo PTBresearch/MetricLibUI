@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import ast
 from typing import List, Optional
 
 import matplotlib
@@ -23,7 +24,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-import ast
 import math
 
 from metriclib.data import Dataset
@@ -56,6 +56,116 @@ def startup():
     con = duckdb.connect()
 
 
+def dataset_key(name: str) -> str:
+    return name.replace(".csv", "")
+
+
+def load_table_with_fallback(primary_table: str, fallback_table: str) -> pd.DataFrame:
+    """Load primary DuckDB table, fallback to alternate table if missing."""
+    try:
+        return con.execute(f"SELECT * FROM {primary_table}").df()
+    except duckdb.Error:
+        return con.execute(f"SELECT * FROM {fallback_table}").df()
+
+
+def coerce_label_dataframe_types(labels_df: pd.DataFrame) -> pd.DataFrame:
+    """Convert label columns to numeric when values are numeric strings."""
+    coerced_df = labels_df.copy()
+    for col in coerced_df.columns:
+        series = coerced_df[col]
+        converted = pd.to_numeric(series, errors="coerce")
+        if converted.notna().sum() == series.notna().sum():
+            coerced_df[col] = converted
+    return coerced_df
+
+
+def coerce_label_scalar(value):
+    """Convert numeric-like label scalars (e.g. '0', '1') to numbers."""
+    if value is None:
+        return None
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped == "":
+            return value
+        try:
+            numeric_value = float(stripped)
+            return int(numeric_value) if numeric_value.is_integer() else numeric_value
+        except ValueError:
+            return value
+    return value
+
+
+def labels_df_to_multiclass_matrix(
+    labels_df: pd.DataFrame, n_label_targets: int
+) -> np.ndarray:
+    """Return numeric 2D matrix for multi-class labels with fixed width."""
+    width = max(1, n_label_targets)
+    if labels_df.empty:
+        return np.empty((0, width), dtype=float)
+
+    if labels_df.shape[1] == 1:
+        rows = []
+        for value in labels_df.iloc[:, 0].tolist():
+            if isinstance(value, (list, tuple, np.ndarray)):
+                row = list(value)
+            elif isinstance(value, str):
+                try:
+                    parsed = ast.literal_eval(value)
+                    if isinstance(parsed, (list, tuple, np.ndarray)):
+                        row = list(parsed)
+                    else:
+                        row = [parsed]
+                except Exception:
+                    row = [value]
+            elif pd.isna(value):
+                row = []
+            else:
+                row = [value]
+
+            if len(row) < width:
+                row.extend([0] * (width - len(row)))
+            else:
+                row = row[:width]
+            rows.append(row)
+
+        matrix_df = pd.DataFrame(rows)
+    else:
+        matrix_df = labels_df.iloc[:, :width].copy()
+        if matrix_df.shape[1] < width:
+            for j in range(matrix_df.shape[1], width):
+                matrix_df[j] = 0
+
+    matrix_df = matrix_df.apply(pd.to_numeric, errors="coerce").fillna(0)
+    return matrix_df.to_numpy(dtype=float)
+
+
+def sanitize_metadata_for_duckdb(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize object columns so DuckDB sees stable scalar types per column."""
+    cleaned = df.copy()
+    object_cols = cleaned.select_dtypes(include=["object"]).columns
+
+    for col in object_cols:
+
+        def _coerce(v):
+            if v is None:
+                return None
+            if isinstance(v, (list, tuple, dict, set, np.ndarray)):
+                if isinstance(v, np.ndarray):
+                    v = v.tolist()
+                if isinstance(v, set):
+                    v = list(v)
+                return json.dumps(v, default=str)
+            if isinstance(v, np.generic):
+                return v.item()
+            return v
+
+        cleaned[col] = cleaned[col].map(_coerce)
+
+    return cleaned
+
+
 class CsvDataset(Dataset):
     def __init__(
         self,
@@ -78,7 +188,7 @@ class CsvDataset(Dataset):
 
         result = {}
         label_keys = [k for k, v in self.mapping.items() if v == "label"]
-        labels = [row.get(k) for k in label_keys]
+        labels = [coerce_label_scalar(row.get(k)) for k in label_keys]
         for value, key in self.mapping.items():
             if key == "other" or key == "label":
                 field = row.get(value)
@@ -209,14 +319,22 @@ async def create_dataset(request: DatasetRequest):
     con.register(request.name, df)
 
     dataset = CsvDataset(name=request.name, df=df, mapping=request.mapping)
-    metadata_df = dataset.get_metadata()
+    metadata_df = sanitize_metadata_for_duckdb(dataset.get_metadata())
 
     con.register(
         f"{request.name}_mapping",
         pd.DataFrame(request.mapping.items(), columns=["key", "value"]),
     )
     con.register(f"{request.name}_metadata_processed", metadata_df)
-    con.register(f"{request.name}_labels", pd.DataFrame(dataset.labels))
+    con.register(f"{request.name}_metadata_processed_base", metadata_df)
+    con.register(
+        f"{request.name}_labels",
+        coerce_label_dataframe_types(pd.DataFrame(dataset.labels)),
+    )
+    con.register(
+        f"{request.name}_labels_base",
+        coerce_label_dataframe_types(pd.DataFrame(dataset.labels)),
+    )
     numeric_cols = metadata_df.select_dtypes(include=[np.number]).columns
     if len(numeric_cols) > 0:
         metadata_df.loc[:, numeric_cols] = metadata_df.loc[:, numeric_cols].replace(
@@ -233,28 +351,34 @@ async def create_dataset(request: DatasetRequest):
 
 @app.get("/api/dataset")
 async def get_dataset(name: str, query: str, mapping: str):
+    key = dataset_key(name)
     query_str = process_query(query)
+    has_query = bool(query_str.strip())
 
-    metadata_df_processed = con.execute(
-        f"SELECT * FROM {name.replace('.csv', '')}_metadata_processed"
-    ).df()
+    metadata_source = (
+        f"{key}_metadata_processed" if has_query else f"{key}_metadata_processed_base"
+    )
+    labels_source = f"{key}_labels" if has_query else f"{key}_labels_base"
 
-    labels = con.execute(f"SELECT * FROM {name.replace('.csv', '')}_labels").df()[
-        "_label"
-    ]
+    metadata_df_processed = load_table_with_fallback(
+        metadata_source, f"{key}_metadata_processed_base"
+    )
 
-    metadata_df_processed["_label"] = labels
+    labels_df = coerce_label_dataframe_types(
+        load_table_with_fallback(labels_source, f"{key}_labels_base")
+    )
+
     if query_str.strip() and query_str != "":
         metadata_df_processed = metadata_df_processed[
             metadata_df_processed.eval(query_str)
         ]
-        labels = metadata_df_processed["_label"]
-        metadata_df_processed = metadata_df_processed.drop(columns=["_label"])
+        labels_df = labels_df.loc[metadata_df_processed.index]
 
-    con.register(
-        f"{name.replace('.csv', '')}_metadata_processed", metadata_df_processed
-    )
-    con.register(f"{name.replace('.csv', '')}_labels", pd.DataFrame(labels))
+    metadata_df_processed = sanitize_metadata_for_duckdb(metadata_df_processed)
+    con.register(f"{key}_metadata_processed", metadata_df_processed)
+    con.register(f"{key}_labels", coerce_label_dataframe_types(labels_df))
+
+    mapping_df = con.execute(f"SELECT * FROM {key}_mapping").df()
 
     metadata_df_processed.insert(0, "idx", metadata_df_processed.index)
 
@@ -265,8 +389,7 @@ async def get_dataset(name: str, query: str, mapping: str):
             :, numeric_cols
         ].replace([np.inf, -np.inf], np.nan)
 
-    mapping = con.execute(f"SELECT * FROM {name.replace('.csv', '')}_mapping").df()
-    mapping_cols = set(mapping["key"]).union(set(mapping["value"]))
+    mapping_cols = set(mapping_df["key"]).union(set(mapping_df["value"]))
     metadata_df_processed = metadata_df_processed[
         [
             col
@@ -383,7 +506,9 @@ def convert_figures(obj):
 async def create_report(request: ReportRequest):
     datasets = []
     for i, name in enumerate(request.dataset_names):
-        metadata_df = con.execute(f"SELECT * FROM {name.replace('.csv', '')}").df()
+        key = dataset_key(name)
+        n_label_targets = sum(1 for v in request.mappings[i].values() if v == "label")
+        metadata_df = con.execute(f"SELECT * FROM {key}").df()
         print(f"Loaded dataset {name} with {len(metadata_df)} rows.")
         if request.queries and i < len(request.queries):
             query_str = process_query(request.queries[i])
@@ -391,11 +516,18 @@ async def create_report(request: ReportRequest):
                 metadata_df = metadata_df[metadata_df.eval(query_str)]
 
         processed_metadata_df = con.execute(
-            f"SELECT * FROM {name.replace('.csv', '')}_metadata_processed"
+            f"SELECT * FROM {key}_metadata_processed"
         ).df()
-        labels = con.execute(f"SELECT * FROM {name.replace('.csv', '')}_labels").df()[
-            "_label"
-        ]
+        labels_df = coerce_label_dataframe_types(
+            con.execute(f"SELECT * FROM {key}_labels").df()
+        )
+        if n_label_targets > 1:
+            labels_matrix = labels_df_to_multiclass_matrix(labels_df, n_label_targets)
+            labels = pd.Series(labels_matrix.tolist())
+        elif labels_df.shape[1] == 1:
+            labels = labels_df.iloc[:, 0].to_numpy()
+        else:
+            labels = labels_df.iloc[:, 0].to_numpy()
 
         datasets.append(
             CsvDataset(
@@ -418,27 +550,12 @@ async def create_report(request: ReportRequest):
                     metric_config={"column": "labels"},
                     dataset_name=request.dataset_names[i],
                 )
-                report.add_chart(
-                    name=f"class_balance",
-                    chart_type="label_bar_chart",
-                    chart_config={},
-                )
             else:
                 report.add_metric(
                     name=f"class_balance",
                     metric_name="MultiLabelGeneralizedImbalanceRatio",
                     metric_config={"column": "labels"},
                     dataset_name=request.dataset_names[i],
-                )
-
-                report.add_chart(
-                    name=f"class_balance",
-                    chart_type="categorical_bar_chart",
-                    chart_config={
-                        "field": [
-                            v for v, k in request.mappings[i].items() if k == "label"
-                        ][0]
-                    },
                 )
 
         if "sex" in request.mappings[i].values():
@@ -515,6 +632,7 @@ async def create_report(request: ReportRequest):
         if (
             "sex" in request.mappings[i].values()
             and "label" in request.mappings[i].values()
+            and len([v for v in request.mappings[i].values() if v == "label"]) > 1
         ):
             report.add_chart(
                 name="coverage_label_sex",
@@ -671,13 +789,38 @@ async def create_report(request: ReportRequest):
 
     metrics, charts, scores = report.generate()
 
+    label_target_counts = {
+        dataset_key(request.dataset_names[i]): sum(
+            1 for v in request.mappings[i].values() if v == "label"
+        )
+        for i in range(len(request.dataset_names))
+    }
+
     for dataset in report.datasets:
+        key = dataset_key(dataset.name)
         con.register(
-            f"{dataset.name.replace('.csv', '')}_metadata_processed", dataset.metadata
+            f"{key}_metadata_processed", sanitize_metadata_for_duckdb(dataset.metadata)
         )
-        con.register(
-            f"{dataset.name.replace('.csv', '')}_labels", pd.DataFrame(dataset.labels)
-        )
+        labels_array = np.asarray(dataset.labels)
+        n_label_targets = label_target_counts.get(key, 1)
+        if n_label_targets > 1:
+            labels_df = pd.DataFrame(labels_array)
+            con.register(
+                f"{key}_labels",
+                pd.DataFrame(
+                    labels_df_to_multiclass_matrix(labels_df, n_label_targets)
+                ),
+            )
+        elif labels_array.ndim == 1:
+            con.register(
+                f"{key}_labels",
+                coerce_label_dataframe_types(pd.DataFrame({"_label": labels_array})),
+            )
+        else:
+            con.register(
+                f"{key}_labels",
+                coerce_label_dataframe_types(pd.DataFrame(labels_array)),
+            )
 
     payload = {
         "metrics": metrics,

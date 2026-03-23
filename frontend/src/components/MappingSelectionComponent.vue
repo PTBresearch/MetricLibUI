@@ -40,6 +40,7 @@
       >
         {{ source }}: {{ target }}
       </div>
+      <p v-if="warningMessage" class="warning-text">{{ warningMessage }}</p>
       <button @click="close" class="close-button">Save</button>
     </div>
 
@@ -93,11 +94,37 @@ export default {
       showOverlay: false,
       pendingField: null,
       selectedTargetField: null,
+      warningMessage: "",
       targetFieldOptions: ["age", "sex", "height", "weight", "nurse", "site", "device", "model_input", "ethnicity", "created_at", "label", "other"]
     };
   },
+  watch: {
+    cols: {
+      immediate: true,
+      handler(newCols) {
+        this.autoMapMatchingFields(newCols);
+      }
+    }
+  },
   methods: {
+    autoMapMatchingFields(cols) {
+      if (!Array.isArray(cols)) {
+        return;
+      }
+
+      const targetOptions = new Set(this.targetFieldOptions);
+      cols.forEach((field) => {
+        if (targetOptions.has(field) && !this.mapping[field]) {
+          this.mapping[field] = field;
+        }
+      });
+    },
     close() {
+      if (!Object.values(this.mapping).includes("label")) {
+        this.warningMessage = "Please map at least one field to 'label' before saving.";
+        return;
+      }
+
       this.$emit("close", {
         mapping: this.mapping,
         useCase: this.selectedUseCase,
@@ -115,6 +142,9 @@ export default {
     confirmAddField() {
       if (this.pendingField && this.selectedTargetField) {
         this.mapping[this.pendingField] = this.selectedTargetField;
+        if (this.selectedTargetField === "label") {
+          this.warningMessage = "";
+        }
         this.pendingField = null;
         this.selectedTargetField = null;
         this.showOverlay = false;
@@ -285,6 +315,13 @@ input:checked + .slider:before {
   font-weight: 600;
   box-shadow: 0 2px 8px rgba(40,167,69,0.10);
   transition: background 0.2s;
+}
+
+.warning-text {
+  margin-top: 12px;
+  margin-bottom: 0;
+  color: #ff6b6b;
+  font-size: 13px;
 }
 .close-button:hover {
   background: linear-gradient(90deg, #218838 60%, #28a745 100%);

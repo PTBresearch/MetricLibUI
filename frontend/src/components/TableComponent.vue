@@ -172,9 +172,11 @@ export default {
         this.$emit('loading', false);
       }
     },
-    clearQuery() {
+    async clearQuery() {
       const textarea = this.$el.querySelector('.custom-query');
       if (textarea) textarea.value = '';
+      this.filter.value = "";
+      await this.refreshTable();
     },
     async getImage(row) {
       const name = this.dbName
