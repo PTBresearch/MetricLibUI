@@ -293,24 +293,26 @@ export default {
       
         const hasScoreData = orderedDescriptions.length > 0 && datasetMap.size > 0;
 
+        const orderedDatasets = Array.from(datasetMap.keys());
+
         const scoreTableHTML = hasScoreData ? `
           <h5 style="margin: 0 0 6px 0; font-size: 0.8rem;">Scores</h5>
           <table style="width: 100%; border-collapse: collapse; font-size: 0.7rem; text-align: center;">
             <thead>
               <tr>
-                <th style="border: 1px solid #555; padding: 4px 8px; background: #222; color: #ddd;">Dataset</th>
-                ${orderedDescriptions.map(desc => `
-                  <th style="border: 1px solid #555; padding: 4px 8px; background: #222; color: #ddd;">${desc}</th>
+                <th style="border: 1px solid #555; padding: 4px 8px; background: #222; color: #ddd;"></th>
+                ${orderedDatasets.map(dataset => `
+                  <th style="border: 1px solid #555; padding: 4px 8px; background: #222; color: #ddd;">${dataset}</th>
                 `).join('')}
               </tr>
             </thead>
             <tbody>
-              ${Array.from(datasetMap.entries()).map(([dataset, rowData]) => {
+              ${orderedDescriptions.map(desc => {
                 return `
                   <tr>
-                    <td style="border: 1px solid #555; padding: 4px 8px; background: #111; color: #ccc;">${dataset}</td>
-                    ${orderedDescriptions.map(desc => {
-                      const value = rowData[desc];
+                    <td style="border: 1px solid #555; padding: 4px 8px; background: #222; color: #ddd; font-weight: bold;">${desc}</td>
+                    ${orderedDatasets.map(dataset => {
+                      const value = datasetMap.get(dataset)[desc];
                       const displayValue = typeof value === 'number' ? value.toFixed(4) : (value ?? '-');
                       return `
                         <td style="border: 1px solid #555; padding: 4px 8px; background: #111; color: #ccc;">

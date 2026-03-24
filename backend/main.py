@@ -299,18 +299,12 @@ async def create_dataset(request: DatasetRequest):
 async def get_dataset(name: str, query: str, mapping: str):
     key = dataset_key(name)
     query_str = process_query(query)
-    has_query = bool(query_str.strip())
 
-    metadata_source = (
-        f"{key}_metadata_processed" if has_query else f"{key}_metadata_processed_base"
-    )
-    labels_source = f"{key}_labels" if has_query else f"{key}_labels_base"
+    metadata_df_processed = con.execute(
+        f"SELECT * FROM {key}_metadata_processed_base"
+    ).df()
 
-    metadata_df_processed = load_table_with_fallback(
-        metadata_source, f"{key}_metadata_processed_base"
-    )
-
-    labels_df = load_table_with_fallback(labels_source, f"{key}_labels_base")
+    labels_df = con.execute(f"SELECT * FROM {key}_labels_base").df()
 
     if query_str.strip() and query_str != "":
         metadata_df_processed = metadata_df_processed[
@@ -320,7 +314,6 @@ async def get_dataset(name: str, query: str, mapping: str):
         metadata_df_processed = metadata_df_processed.loc[common_idx]
         labels_df = labels_df.loc[common_idx]
 
-    metadata_df_processed = sanitize_metadata_for_duckdb(metadata_df_processed)
     con.register(f"{key}_metadata_processed", metadata_df_processed)
     con.register(f"{key}_labels", labels_df)
 
@@ -690,22 +683,21 @@ async def create_report(request: ReportRequest):
                 dataset_name=request.dataset_names[i],
             )
 
-        if all(
-            "model_input" in request.mappings[i].values()
-            for i in range(len(request.mappings))
-        ):
-            report.add_chart(
-                name="sample_entropy",
-                chart_type="continuous_bar_chart",
-                chart_config={"field": "SampleEntropy", "n_buckets": 10},
-            )
-
         report.add_metric(
             name="metadata_completeness",
             metric_name="MetadataCompleteness",
             metric_config={},
             dataset_name=request.dataset_names[i],
         )
+
+        for metric in TabularMetric.registry.values():
+            if issubclass(metric, CustomMetric):
+                report.add_metric(
+                    name=metric().dimension,
+                    metric_name=metric.__name__,
+                    metric_config={},
+                    dataset_name=request.dataset_names[i],
+                )
 
     if all("weight" in mapping.values() for mapping in request.mappings):
         report.add_chart(
@@ -719,6 +711,16 @@ async def create_report(request: ReportRequest):
             name="variety_device",
             chart_type="categorical_bar_chart",
             chart_config={"field": "device"},
+        )
+
+    if all(
+        "model_input" in request.mappings[i].values()
+        for i in range(len(request.mappings))
+    ):
+        report.add_chart(
+            name="sample_entropy",
+            chart_type="continuous_bar_chart",
+            chart_config={"field": "sample_entropy", "n_buckets": 10},
         )
 
     if all("site" in mapping.values() for mapping in request.mappings):
@@ -756,22 +758,37 @@ async def create_report(request: ReportRequest):
             chart_config={"field": "created_at"},
         )
 
-    for metric in TabularMetric.registry.values():
-        if issubclass(metric, CustomMetric):
-            report.add_metric(
-                name=metric().dimension,
-                metric_name=metric.__name__,
-                metric_config={},
-                dataset_name=request.dataset_names[0],
-            )
+    if all("label" in mapping.values() for mapping in request.mappings):
+        report.add_chart(
+            name="class_balance",
+            chart_type="label_bar_chart",
+            chart_config={},
+        )
+
+    if len(feature_columns) > 0 and all(
+        "label" in mapping.values() for mapping in request.mappings
+    ):
+        report.add_chart(
+            name="correlations",
+            chart_type="label_heatmap",
+            chart_config={"feature_columns": feature_columns},
+        )
 
     metrics, charts, scores = report.generate()
 
     for dataset in report.datasets:
         key = dataset_key(dataset.name)
-        con.register(
-            f"{key}_metadata_processed", sanitize_metadata_for_duckdb(dataset.metadata)
-        )
+        sanitized = sanitize_metadata_for_duckdb(dataset.metadata)
+        con.register(f"{key}_metadata_processed", sanitized)
+        base_df = con.execute(f"SELECT * FROM {key}_metadata_processed_base").df()
+        new_cols = [c for c in sanitized.columns if c not in base_df.columns]
+        if new_cols:
+            for col in new_cols:
+                base_df[col] = np.nan
+                base_df.loc[sanitized.index.intersection(base_df.index), col] = (
+                    sanitized.loc[sanitized.index.intersection(base_df.index), col]
+                )
+            con.register(f"{key}_metadata_processed_base", base_df)
 
     payload = {
         "metrics": metrics,
