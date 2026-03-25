@@ -27,7 +27,7 @@ import math
 
 from metriclib.data import Dataset
 from metriclib.report import Report
-from metriclib.metric import TabularMetric
+from metriclib.metric import TabularMetric, StreamMetric
 
 from custom_metrics import CustomMetric
 
@@ -623,6 +623,13 @@ async def create_report(request: ReportRequest):
             dataset_name=request.dataset_names[i],
         )
 
+        report.add_metric(
+            name="uniqueness",
+            metric_name="Duplicates",
+            metric_config={},
+            dataset_name=request.dataset_names[i],
+        )
+
         if "model_input" in request.mappings[i].values():
             report.add_metric(
                 name="resolution",
@@ -633,7 +640,7 @@ async def create_report(request: ReportRequest):
 
             if request.use_case == "ECG diagnosis":
                 report.add_metric(
-                    name="sample_entropy",
+                    name="signal_precision",
                     metric_name="SampleEntropy",
                     metric_config={},
                     dataset_name=request.dataset_names[i],
@@ -691,6 +698,15 @@ async def create_report(request: ReportRequest):
         )
 
         for metric in TabularMetric.registry.values():
+            if issubclass(metric, CustomMetric):
+                report.add_metric(
+                    name=metric().dimension,
+                    metric_name=metric.__name__,
+                    metric_config={},
+                    dataset_name=request.dataset_names[i],
+                )
+
+        for metric in StreamMetric.registry.values():
             if issubclass(metric, CustomMetric):
                 report.add_metric(
                     name=metric().dimension,

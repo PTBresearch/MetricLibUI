@@ -54,6 +54,7 @@
     <div v-if="showDatasetSelector" class="overlay overlay--top" @click.self="closeDatasetSelector">
       <div class="app-overlay-content">
         <DatasetSelectionComponent
+          :selectedDatasets="dbNames"
           @cancel="closeDatasetSelector"
           @select="handleDatasetSelected"
           @loading="handleLoading"

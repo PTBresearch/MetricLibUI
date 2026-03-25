@@ -19,17 +19,25 @@
     </div>
 
     <div v-if="loadingError" class="error-text">{{ loadingError }}</div>
+    <div v-if="duplicateError" class="error-text">{{ duplicateError }}</div>
   </div>
 </template>
 
 <script>
 export default {
   name: 'DatasetSelectionComponent',
+  props: {
+    selectedDatasets: {
+      type: Array,
+      default: () => [],
+    },
+  },
   emits: ['cancel', 'select', 'loading'],
   data() {
     return {
       files: [],
       loadingError: '',
+      duplicateError: '',
     };
   },
   mounted() {
@@ -62,6 +70,11 @@ export default {
       }
     },
     select(file) {
+      if (this.selectedDatasets.includes(file)) {
+        this.duplicateError = `"${file}" has already been selected.`;
+        return;
+      }
+      this.duplicateError = '';
       this.$emit('select', file);
     },
   },

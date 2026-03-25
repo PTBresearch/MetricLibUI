@@ -118,13 +118,13 @@ export default {
       metricsData: {
         "Measurement Process": {
           "device error": {
-            accuracy: ["sample_entropy"],
-            precision: [],
+            accuracy: [],
+            precision: ["signal_precision"],
           },
           "human induced error": {
             "noisy labels": [],
             carelessness: [],
-            outliers: ["local_outlier_factor"],
+            outliers: [],
           },
           completeness: ["metadata_completeness"],
           "source credibility": {
@@ -220,8 +220,9 @@ export default {
   methods: {
     changeTopTab(tab) {
       this.activeTopTab = tab;
-      const defaultSubTab = this.subTabsMap[tab]?.[0] || "";
-      this.activeSubTab = defaultSubTab;
+      const subs = this.subTabsMap[tab] || [];
+      const usableSub = subs.find(s => !this.isDisabledSubtab(s) && !this.isEmptySubtab(s));
+      this.activeSubTab = usableSub || subs[0] || "";
       this.plotlyVisible = false;
       this.selectedItems = null;
       this.$nextTick(() => {
