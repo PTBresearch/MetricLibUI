@@ -79,7 +79,7 @@ export default {
       pendingField: null,
       selectedTargetField: null,
       warningMessage: "",
-      targetFieldOptions: ["age", "sex", "height", "weight", "nurse", "site", "device", "model_input", "ethnicity", "created_at", "label", "other"]
+      targetFieldOptions: ["age", "sex", "height", "weight", "manufacturer", "nurse", "site", "device", "model_input", "ethnicity", "created_at", "label", "other"]
     };
   },
   watch: {

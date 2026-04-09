@@ -589,6 +589,21 @@ async def create_report(request: ReportRequest):
                 dataset_name=request.dataset_names[i],
             )
 
+        if "manufacturer" in request.mappings[i].values():
+            manufacturer_col = [
+                k for k, v in request.mappings[i].items() if v == "device"
+            ][0]
+            report.add_metric(
+                name=f"variety_device",
+                metric_name="HillNumbers",
+                metric_config={
+                    "column": "manufacturer",
+                    "q": 2,
+                    "types": datasets[i].df[manufacturer_col].unique().tolist(),
+                },
+                dataset_name=request.dataset_names[i],
+            )
+
         if "site" in request.mappings[i].values():
             site_col = [k for k, v in request.mappings[i].items() if v == "site"][0]
             report.add_metric(
