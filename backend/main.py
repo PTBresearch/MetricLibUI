@@ -591,7 +591,7 @@ async def create_report(request: ReportRequest):
 
         if "manufacturer" in request.mappings[i].values():
             manufacturer_col = [
-                k for k, v in request.mappings[i].items() if v == "device"
+                k for k, v in request.mappings[i].items() if v == "manufacturer"
             ][0]
             report.add_metric(
                 name=f"variety_device",
@@ -744,6 +744,13 @@ async def create_report(request: ReportRequest):
             name="variety_device",
             chart_type="categorical_bar_chart",
             chart_config={"field": "device"},
+        )
+
+    if all("manufacturer" in mapping.values() for mapping in request.mappings):
+        report.add_chart(
+            name="variety_device",
+            chart_type="categorical_bar_chart",
+            chart_config={"field": "manufacturer"},
         )
 
     if all(
