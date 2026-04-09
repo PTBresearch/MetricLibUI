@@ -104,11 +104,6 @@ export default {
       });
     },
     close() {
-      if (!Object.values(this.mapping).includes("label")) {
-        this.warningMessage = "Please map at least one field to 'label' before saving.";
-        return;
-      }
-
       this.$emit("close", {
         mapping: this.mapping,
         useCase: this.selectedUseCase,
