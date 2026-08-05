@@ -9,11 +9,13 @@
   },
   "dependencies": {
     "chart.js": "^4.4.0",
+    "fast-csv": "^4.3.6",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
     "plotly.js-dist": "^3.0.1",
     "plotly.js-dist-min": "^3.0.1",
     "vue": "^3.3.4",
-    "vue-chartjs": "^5.3.2",
-    "fast-csv": "^4.3.6"
+    "vue-chartjs": "^5.3.2"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^4.0.0",
