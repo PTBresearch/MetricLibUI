@@ -35,6 +35,15 @@
     </div>
 
     <div class="right-panel">
+      <div class="report-actions">
+        <DownloadReportComponent
+          :report="report"
+          :datasets="reportDatasets"
+          :useCase="this.useCase"
+          @loading="handleLoading"
+          @error="showError"
+        />
+      </div>
       <div class="radar-chart-container" ref="radarChartContainer">
         <RadarComponent ref="radarChart" />
       </div>
@@ -80,6 +89,7 @@ import DataTable from "./components/TableComponent.vue";
 import RadarComponent from "./components/RadarComponent.vue";
 import MetricSelectionComponent from "./components/MetricSelectionComponent.vue";
 import DatapointComponent from "./components/DatapointComponent.vue";
+import DownloadReportComponent from "./components/DownloadReportComponent.vue";
 
 export default {
   name: "App",
@@ -92,7 +102,8 @@ export default {
     RadarComponent,
     MetricSelectionComponent,
     DatapointComponent,
-    DatasetSelectionComponent
+    DatasetSelectionComponent,
+    DownloadReportComponent
   },
   data() {
     return {
@@ -114,7 +125,25 @@ export default {
       currentImage: null,
     };
   },
+  computed: {
+    reportDatasets() {
+      return this.dbNames.map((name, index) => ({
+        name,
+        query: this.queries[index] || "",
+        rows: this.buttons[index]?.rows ?? null,
+        selectedRows: Array.isArray(this.records[index])
+          ? this.records[index].length
+          : null,
+        features: this.buttons[index]?.features ?? null,
+        missingValues: this.buttons[index]?.missing_values ?? null,
+      }));
+    },
+  },
   methods: {
+    showError(message) {
+      this.hasError = true;
+      this.errorMessage = message;
+    },
     startLoading() {
       this.loadingCount += 1;
       this.isLoading = true;
@@ -313,6 +342,13 @@ body {
 
 .right-panel > * + * {
   margin-top: 20px;
+}
+
+.report-actions {
+  width: 100%;
+  max-width: 1000px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .grid-container {
