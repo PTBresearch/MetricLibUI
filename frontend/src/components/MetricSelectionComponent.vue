@@ -163,7 +163,10 @@ export default {
               "variety_osteoporosis",
               "variety_hyperparathyroidism",
               "variety_early_monopause",
-              "variety_lordosis_cyphosis"
+              "variety_lordosis_cyphosis",
+              "variety_surgery",
+              "variety_image",
+              "variety_procedure_code"
             ],
             "variety in data sources": [
               "variety_device",
@@ -171,6 +174,8 @@ export default {
               "variety_view_position",
               "variety_compression_force",
               "variety_machine_model",
+              "variety_date_image",
+              "variety_date_surgery",
             ],
           },
           "depth of data": {

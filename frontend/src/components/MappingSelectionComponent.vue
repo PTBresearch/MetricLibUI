@@ -94,7 +94,7 @@ export default {
       }
       if (this.selectedUseCase === "Vertebra segmentation") {
         return [
-          "age", "sex", "path_segmentation", "manufacturer", "device", "site", "date_image","date_surgery", 
+          "age", "sex", "path_segmentation", "manufacturer", "device", "site", "date_image","date_surgery", "procedure_code",
           "tobacco","alcohol","osteoporosis", "corticoids","diabetes","sedentary","physical_activity","early_menopause","hyperparathyroidism","lordosis_cyphosis",
           ...common,
         ];

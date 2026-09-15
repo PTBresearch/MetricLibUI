@@ -694,80 +694,64 @@ async def create_report(request: ReportRequest):
         if "tobacco" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_tobacco",
-                metric_name="IQR",
-                metric_config={
-                    "column": "tobacco",
-                },
+                metric_name="HillNumbers",
+                metric_config={"column": "tobacco", "q": 2, "types": [0, 1]},
                 dataset_name=request.dataset_names[i],
             )
             
         if "alcohol" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_alcohol",
-                metric_name="IQR",
-                metric_config={
-                    "column": "alcohol",
-                },
+                metric_name="HillNumbers",
+                metric_config={"column": "alcohol", "q": 2, "types": [0, 1]},
                 dataset_name=request.dataset_names[i],
             )
                      
         if "corticoids" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_corticoids",
-                metric_name="IQR",
-                metric_config={
-                    "column": "corticoids",
-                },
+                metric_name="HillNumbers",
+                metric_config={"column": "corticoids", "q": 2, "types": [0, 1]},
                 dataset_name=request.dataset_names[i],
             )
             
         if "sedentary" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_sedentary",
-                metric_name="IQR",
-                metric_config={
-                    "column": "sedentary",
-                },
+                metric_name="HillNumbers",
+                metric_config={"column": "sedentary", "q": 2, "types": [0, 1]},
                 dataset_name=request.dataset_names[i],
             )
             
         if "physical_activity" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_physical_activity",
-                metric_name="IQR",
-                metric_config={
-                    "column": "physical_activity",
-                },
+                metric_name="HillNumbers",
+                metric_config={"column": "physical_activity", "q": 2, "types": [0, 1]},
                 dataset_name=request.dataset_names[i],
             )
             
         if "diabetes" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_diabetes",
-                metric_name="IQR",
-                metric_config={
-                    "column": "diabetes",
-                },
+                metric_name="HillNumbers",
+                metric_config={"column": "diabetes", "q": 2, "types": [0, 1]},
                 dataset_name=request.dataset_names[i],
             )
             
         if "osteoporosis" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_osteoporosis",
-                metric_name="IQR",
-                metric_config={
-                    "column": "osteoporosis",
-                },
+                metric_name="HillNumbers",
+                metric_config={"column": "osteoporosis", "q": 2, "types": [0, 1]},
                 dataset_name=request.dataset_names[i],
             )
             
         if "hyperparathyroidism" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_hyperparathyroidism",
-                metric_name="IQR",
-                metric_config={
-                    "column": "hyperparathyroidism",
-                },
+                metric_name="HillNumbers",
+                metric_config={"column": "hyperparathyroidism", "q": 2, "types": [0, 1]},
                 dataset_name=request.dataset_names[i],
             )
             
@@ -784,20 +768,16 @@ async def create_report(request: ReportRequest):
         if "early_menopause" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_early_menopause",
-                metric_name="IQR",
-                metric_config={
-                    "column": "early_menopause",
-                },
+                metric_name="HillNumbers",
+                metric_config={"column": "early_menopause", "q": 2, "types": [0, 1]},
                 dataset_name=request.dataset_names[i],
             )
             
         if "lordosis_cyphosis" in request.mappings[i].values():
             report.add_metric(
                 name=f"variety_lordosis_cyphosis",
-                metric_name="IQR",
-                metric_config={
-                    "column": "lordosis_cyphosis",
-                },
+                metric_name="HillNumbers",
+                metric_config={"column": "lordosis_cyphosis", "q": 2, "types": [0, 1]},
                 dataset_name=request.dataset_names[i],
             )
             
@@ -859,6 +839,19 @@ async def create_report(request: ReportRequest):
                     "column": "site",
                     "q": 2,
                     "types": datasets[i].df[site_col].unique().tolist(),
+                },
+                dataset_name=request.dataset_names[i],
+            )
+            
+        if "procedure_code" in request.mappings[i].values():
+            code_col = [k for k, v in request.mappings[i].items() if v == "procedure_code"][0]
+            report.add_metric(
+                name=f"variety_procedure_code",
+                metric_name="HillNumbers",
+                metric_config={
+                    "column": "procedure_code",
+                    "q": 2,
+                    "types": datasets[i].df[code_col].unique().tolist(),
                 },
                 dataset_name=request.dataset_names[i],
             )
@@ -1179,6 +1172,13 @@ async def create_report(request: ReportRequest):
             chart_type="categorical_bar_chart",
             chart_config={"field": "site"},
         )
+        
+    if all("procedure_code" in mapping.values() for mapping in request.mappings):
+        report.add_chart(
+            name="variety_procedure_code",
+            chart_type="categorical_bar_chart",
+            chart_config={"field": "procedure_code"},
+        )
 
     if all("sex" in mapping.values() for mapping in request.mappings):
         report.add_chart(
@@ -1271,6 +1271,22 @@ async def create_report(request: ReportRequest):
             chart_type="continuous_bar_chart",
             chart_config={"field": "height"},
         )
+        
+    if all("date_surgery" in mapping.values() for mapping in request.mappings):
+        report.add_chart(
+            name="variety_date_surgery",
+            chart_type="categorical_bar_chart",
+            chart_config={"field": "date_surgery"},
+        )
+        
+    if all("date_image" in mapping.values() for mapping in request.mappings):
+        report.add_chart(
+            name="variety_date_image",
+            chart_type="categorical_bar_chart",
+            chart_config={"field": "date_image"},
+        )
+        
+    
 
     if all("created_at" in mapping.values() for mapping in request.mappings):
         report.add_chart(
